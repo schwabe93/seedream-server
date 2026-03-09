@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seedream Gallery</title>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #111118;
+      --card: #16161f;
+      --border: #252535;
+      --accent: #6d28d9;
+      --text: #e8e8f0;
+      --muted: #8b8ba8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: radial-gradient(circle at top, #181828 0%, var(--bg) 45%);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: #101018ee;
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .title { font-weight: 700; font-size: 16px; }
+    .spacer { flex: 1; }
+    .btn {
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .meta { color: var(--muted); font-size: 12px; padding: 10px 16px; }
+    .grid {
+      padding: 0 16px 20px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .card img, .card video {
+      width: 100%;
+      display: block;
+      background: #000;
+      object-fit: cover;
+    }
+    .card img { aspect-ratio: 1; cursor: zoom-in; }
+    .card video { aspect-ratio: 16/9; }
+    .info {
+      padding: 8px 10px;
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+    }
+    .empty {
+      padding: 36px 16px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: #000000cc;
+      z-index: 20;
+    }
+    .lightbox.show { display: flex; }
+    .lightbox img, .lightbox video { max-width: 92vw; max-height: 92vh; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title">Seedream Gallery</div>
+    <div class="spacer"></div>
+    <button class="btn" onclick="loadGallery()">Refresh</button>
+    <a class="btn primary" href="/">Back to Studio</a>
+  </header>
+  <div class="meta" id="meta">Loading outputs...</div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" style="display:none">No outputs found yet.</div>
+
+  <div class="lightbox" id="lightbox" onclick="closeLightbox()">
+    <img id="lightboxImg" alt="" style="display:none">
+    <video id="lightboxVideo" controls style="display:none" onclick="event.stopPropagation()"></video>
+  </div>
+
+  <script>
+    function esc(s) {
+      return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function openImage(src) {
+      const box = document.getElementById('lightbox');
+      const img = document.getElementById('lightboxImg');
+      const vid = document.getElementById('lightboxVideo');
+      vid.pause(); vid.src = ''; vid.style.display = 'none';
+      img.src = src; img.style.display = 'block';
+      box.classList.add('show');
+    }
+
+    function openVideo(src) {
+      const box = document.getElementById('lightbox');
+      const img = document.getElementById('lightboxImg');
+      const vid = document.getElementById('lightboxVideo');
+      img.src = ''; img.style.display = 'none';
+      vid.src = src; vid.style.display = 'block';
+      box.classList.add('show');
+      vid.play().catch(() => {});
+    }
+
+    function closeLightbox() {
+      const box = document.getElementById('lightbox');
+      const vid = document.getElementById('lightboxVideo');
+      box.classList.remove('show');
+      vid.pause();
+      vid.src = '';
+    }
+
+    function download(url, filename) {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || '';
+      a.target = '_blank';
+      a.click();
+    }
+
+    async function loadGallery() {
+      const meta = document.getElementById('meta');
+      const grid = document.getElementById('grid');
+      const empty = document.getElementById('empty');
+      meta.textContent = 'Loading outputs...';
+      empty.style.display = 'none';
+      grid.innerHTML = '';
+
+      try {
+        const r = await fetch('/api/outputs');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const data = await r.json();
+        const files = Array.isArray(data.files) ? data.files : [];
+        meta.textContent = files.length + ' output' + (files.length === 1 ? '' : 's');
+
+        if (!files.length) {
+          empty.style.display = 'block';
+          return;
+        }
+
+        files.forEach(f => {
+          const name = f.name || '';
+          const url = '/outputs/' + name;
+          const isVideo = /\.(mp4|webm)$/i.test(name);
+          const card = document.createElement('div');
+          card.className = 'card';
+
+          if (isVideo) {
+            card.innerHTML = `
+              <video src="${url}" controls playsinline preload="metadata"></video>
+              <div class="info">
+                <span class="name" title="${esc(name)}">${esc(name)}</span>
+                <div style="display:flex;gap:6px">
+                  <button class="btn" style="padding:4px 8px" onclick="download('${url}','${esc(name)}')">Save</button>
+                  <button class="btn" style="padding:4px 8px;border-color:#ef444466;color:#ef4444" onclick="deleteOutput('${esc(name)}', this)">Delete</button>
+                </div>
+              </div>`;
+          } else {
+            card.innerHTML = `
+              <img src="${url}" alt="${esc(name)}" loading="lazy" onclick="openImage('${url}')">
+              <div class="info">
+                <span class="name" title="${esc(name)}">${esc(name)}</span>
+                <div style="display:flex;gap:6px">
+                  <button class="btn" style="padding:4px 8px" onclick="download('${url}','${esc(name)}')">Save</button>
+                  <button class="btn" style="padding:4px 8px;border-color:#ef444466;color:#ef4444" onclick="deleteOutput('${esc(name)}', this)">Delete</button>
+                </div>
+              </div>`;
+          }
+          grid.appendChild(card);
+        });
+      } catch (e) {
+        meta.textContent = 'Could not load outputs: ' + e.message;
+      }
+    }
+
+    async function deleteOutput(filename, btn) {
+      if (!confirm('Delete this output from server and history?')) return;
+      try {
+        btn.disabled = true;
+        const r = await fetch('/api/output/' + encodeURIComponent(filename), { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        const card = btn.closest('.card');
+        if (card) card.remove();
+        const count = document.querySelectorAll('#grid .card').length;
+        document.getElementById('meta').textContent = count + ' output' + (count === 1 ? '' : 's');
+        if (!count) document.getElementById('empty').style.display = 'block';
+      } catch (e) {
+        alert('Delete failed: ' + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    loadGallery();
+  </script>
+</body>
+</html>

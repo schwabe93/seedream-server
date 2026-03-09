@@ -1,0 +1,2949 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Seedream Studio · Atlas Cloud</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --card: #16161f;
+    --border: #252535;
+    --border-active: #4f46e5;
+    --accent: #6d28d9;
+    --accent2: #7c3aed;
+    --glow: #8b5cf6;
+    --text: #e8e8f0;
+    --muted: #6b6b8a;
+    --danger: #ef4444;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --mono: 'DM Mono', monospace;
+    --sans: 'Syne', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 280px 1fr 320px;
+    grid-template-rows: 56px 1fr;
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  /* TOPBAR */
+  header {
+    grid-column: 1 / -1;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    z-index: 10;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+  .logo-icon {
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, #6d28d9, #a78bfa);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+  }
+
+  .header-tabs {
+    display: flex; gap: 2px; margin-left: 16px;
+    background: var(--bg); border-radius: 8px; padding: 3px;
+  }
+  .htab {
+    padding: 5px 14px; border-radius: 6px; font-size: 12px;
+    font-weight: 600; cursor: pointer; border: none; background: none;
+    color: var(--muted); transition: all 0.2s; font-family: var(--sans);
+  }
+  .htab.active { background: var(--accent); color: #fff; }
+  .htab:hover:not(.active) { color: var(--text); }
+
+  .spacer { flex: 1; }
+
+  .api-key-input {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 12px; color: var(--text);
+    font-family: var(--mono); font-size: 11px; width: 220px;
+    outline: none; transition: border-color 0.2s;
+  }
+  .api-key-input:focus { border-color: var(--accent); }
+  .api-key-input::placeholder { color: var(--muted); }
+
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  .status-dot.connected { background: var(--success); box-shadow: 0 0 6px var(--success); }
+  #serverDot.connected { background: var(--success); }
+
+  /* LEFT PANEL */
+  .left-panel {
+    grid-row: 2;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-section {
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-section-header {
+    padding: 12px 16px 10px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+    color: var(--muted); text-transform: uppercase;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .panel-section-header button {
+    background: none; border: none; cursor: pointer;
+    color: var(--glow); font-size: 16px; line-height: 1;
+    padding: 0 2px; transition: transform 0.2s;
+  }
+  .panel-section-header button:hover { transform: scale(1.2); }
+
+  /* PROMPTS LIST */
+  .prompt-list {
+    padding: 0 10px 10px;
+    display: flex; flex-direction: column; gap: 4px;
+    max-height: 230px; overflow-y: auto;
+  }
+  .prompt-item {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px;
+    cursor: pointer; transition: all 0.15s;
+    display: flex; align-items: flex-start; gap: 8px;
+  }
+  .prompt-item:hover { border-color: var(--accent); background: #1d1d2c; }
+  .prompt-item.active { border-color: var(--accent); background: #1a1830; }
+  .prompt-text {
+    font-size: 11px; color: var(--text); line-height: 1.4;
+    flex: 1; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .prompt-name {
+    font-size: 10px; font-weight: 700; color: var(--glow);
+    margin-bottom: 2px;
+  }
+  .prompt-actions { display: flex; gap: 2px; flex-shrink: 0; }
+  .icon-btn {
+    background: none; border: none; cursor: pointer;
+    color: var(--muted); font-size: 11px; padding: 2px;
+    transition: color 0.15s; border-radius: 3px;
+  }
+  .icon-btn:hover { color: var(--danger); }
+  .icon-btn.use:hover { color: var(--glow); }
+
+  /* FOLDERS */
+  .folder-list {
+    padding: 0 10px 10px;
+    display: flex; flex-direction: column; gap: 4px;
+    flex: 1; overflow-y: auto;
+  }
+  .folder-item {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+  }
+  .folder-header {
+    padding: 8px 10px; cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+    transition: background 0.15s;
+  }
+  .folder-header:hover { background: #1d1d2c; }
+  .folder-icon { font-size: 13px; }
+  .folder-name { font-size: 11px; font-weight: 600; flex: 1; color: var(--text); }
+  .folder-count {
+    font-size: 10px; background: var(--accent); color: #fff;
+    padding: 1px 6px; border-radius: 10px; font-family: var(--mono);
+  }
+  .folder-chevron { font-size: 10px; color: var(--muted); transition: transform 0.2s; }
+  .folder-item.open .folder-chevron { transform: rotate(90deg); }
+
+  .folder-images {
+    padding: 6px 8px 8px;
+    gap: 4px;
+    flex-wrap: wrap;
+    display: none;
+    min-height: 52px;
+  }
+  .folder-item.open .folder-images { display: flex; }
+
+  .folder-thumb {
+    width: 44px; height: 44px; border-radius: 6px;
+    background: var(--bg); border: 1px solid var(--border);
+    overflow: hidden; cursor: pointer; position: relative;
+    transition: border-color 0.15s;
+  }
+  .folder-thumb:hover { border-color: var(--glow); }
+  .folder-thumb.selected { border-color: var(--accent); box-shadow: 0 0 0 2px #6d28d930; }
+  .folder-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .folder-thumb .add-placeholder {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 18px;
+  }
+  .folder-thumb input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+  }
+
+  .folder-add-btn {
+    width: 44px; height: 44px; border-radius: 6px;
+    background: var(--bg); border: 1px dashed var(--border);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: var(--muted); font-size: 18px;
+    transition: all 0.15s; position: relative;
+  }
+  .folder-add-btn:hover { border-color: var(--glow); color: var(--glow); }
+  .folder-add-btn input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    width: 100%; height: 100%;
+  }
+
+  /* CENTER PANEL */
+  .center-panel {
+    grid-row: 2;
+    display: flex; flex-direction: column;
+    overflow: hidden; position: relative;
+  }
+
+  .generate-area {
+    flex: 1; overflow-y: auto; padding: 24px;
+    display: flex; flex-direction: column; gap: 20px;
+  }
+
+  .output-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+  }
+
+  .output-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden; position: relative;
+    animation: fadeIn 0.4s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  .output-card img {
+    width: 100%; display: block; aspect-ratio: 1;
+    object-fit: cover;
+  }
+  .output-card-info {
+    padding: 10px 12px;
+    font-size: 10px; color: var(--muted); font-family: var(--mono);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .output-card-dl {
+    background: none; border: none; cursor: pointer;
+    color: var(--glow); font-size: 14px; padding: 2px;
+    transition: transform 0.15s;
+  }
+  .output-card-dl:hover { transform: translateY(2px); }
+  .output-card-del {
+    background: none; border: none; cursor: pointer;
+    color: var(--danger); font-size: 14px; padding: 2px;
+    transition: transform 0.15s;
+  }
+  .output-card-del:hover { transform: translateY(2px); }
+
+  /* Skeleton loader */
+  .skeleton-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden;
+    animation: fadeIn 0.3s ease;
+  }
+  .skeleton-img {
+    aspect-ratio: 1; background: linear-gradient(90deg, #1a1a28 25%, #22223a 50%, #1a1a28 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    display: flex; align-items: center; justify-content: center;
+  }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+  .skeleton-spinner {
+    width: 32px; height: 32px; border: 3px solid var(--border);
+    border-top-color: var(--glow); border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Empty state */
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: var(--muted); gap: 12px; text-align: center;
+  }
+  .empty-icon { font-size: 48px; opacity: 0.3; }
+  .empty-title { font-size: 16px; font-weight: 700; color: var(--muted); }
+  .empty-sub { font-size: 12px; max-width: 280px; line-height: 1.6; }
+
+  /* PROMPT INPUT BAR */
+  .prompt-bar {
+    padding: 16px 20px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+
+  .prompt-input-row {
+    display: flex; gap: 10px; align-items: flex-end;
+  }
+
+  .prompt-textarea {
+    flex: 1; background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px;
+    color: var(--text); font-family: var(--sans); font-size: 13px;
+    resize: none; outline: none; min-height: 60px; max-height: 120px;
+    line-height: 1.5; transition: border-color 0.2s;
+  }
+  .prompt-textarea:focus { border-color: var(--accent); }
+  .prompt-textarea::placeholder { color: var(--muted); }
+
+  .generate-btn {
+    padding: 0 24px; height: 60px; border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent), var(--glow));
+    border: none; cursor: pointer; color: #fff;
+    font-family: var(--sans); font-size: 13px; font-weight: 700;
+    white-space: nowrap; transition: all 0.2s;
+    display: flex; align-items: center; gap: 8px;
+    box-shadow: 0 0 20px #6d28d940;
+  }
+  .generate-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 24px #6d28d960; }
+  .generate-btn:active { transform: translateY(0); }
+  .generate-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  .prompt-options {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+
+  .select-styled {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 5px 10px;
+    color: var(--text); font-family: var(--sans); font-size: 11px;
+    outline: none; cursor: pointer; transition: border-color 0.2s;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b6b8a'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center;
+    padding-right: 24px;
+  }
+  .select-styled:focus { border-color: var(--accent); }
+
+  .save-prompt-btn {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 5px 12px;
+    color: var(--text); font-family: var(--sans); font-size: 11px;
+    cursor: pointer; transition: all 0.15s; font-weight: 600;
+  }
+  .save-prompt-btn:hover { border-color: var(--glow); color: var(--glow); }
+
+  .ref-images-strip {
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  }
+  .ref-thumb {
+    width: 36px; height: 36px; border-radius: 6px;
+    background: var(--bg); border: 1px solid var(--glow);
+    overflow: hidden; position: relative;
+  }
+  .ref-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .ref-thumb-remove {
+    position: absolute; top: -4px; right: -4px;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--danger); color: #fff;
+    font-size: 8px; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; border: none; line-height: 1;
+  }
+  .ref-label { font-size: 10px; color: var(--muted); }
+
+  /* RIGHT PANEL */
+  .right-panel {
+    grid-row: 2;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  .right-section {
+    padding: 16px; border-bottom: 1px solid var(--border);
+  }
+  .right-section-title {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+    color: var(--muted); text-transform: uppercase; margin-bottom: 12px;
+  }
+
+  .param-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .param-label { font-size: 11px; color: var(--text); }
+  .param-value { font-family: var(--mono); font-size: 11px; color: var(--glow); }
+
+  input[type=range] {
+    width: 100%; accent-color: var(--accent);
+    margin: 4px 0 8px;
+  }
+
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 0;
+  }
+  .toggle-label { font-size: 11px; color: var(--text); }
+  .toggle {
+    width: 36px; height: 20px; border-radius: 10px;
+    background: var(--border); position: relative;
+    cursor: pointer; border: none; transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle.on { background: var(--accent); }
+  .toggle::after {
+    content: ''; position: absolute;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; top: 3px; left: 3px;
+    transition: transform 0.2s;
+  }
+  .toggle.on::after { transform: translateX(16px); }
+
+  .history-list {
+    flex: 1; overflow-y: auto; padding: 10px 16px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .history-item {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; cursor: pointer;
+    transition: all 0.15s;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .history-item:hover { border-color: var(--accent); }
+  .history-thumb {
+    width: 40px; height: 40px; border-radius: 6px;
+    background: var(--bg); overflow: hidden; flex-shrink: 0;
+  }
+  .history-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .history-info { flex: 1; overflow: hidden; }
+  .history-model { font-size: 10px; color: var(--glow); font-weight: 600; }
+  .history-prompt {
+    font-size: 10px; color: var(--muted); margin-top: 2px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+  .history-time { font-size: 9px; color: var(--muted); font-family: var(--mono); margin-top: 3px; }
+
+  /* MODAL */
+  .modal-overlay {
+    position: fixed; inset: 0; background: #00000088;
+    backdrop-filter: blur(4px); z-index: 100;
+    display: none; align-items: center; justify-content: center;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 24px; width: 420px;
+    box-shadow: 0 20px 60px #00000080;
+  }
+  .modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+  .modal-input {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; color: var(--text);
+    font-family: var(--sans); font-size: 13px; outline: none; margin-bottom: 8px;
+  }
+  .modal-input:focus { border-color: var(--accent); }
+  .modal-textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; color: var(--text);
+    font-family: var(--sans); font-size: 12px; outline: none;
+    resize: vertical; min-height: 80px; margin-bottom: 16px;
+  }
+  .modal-textarea:focus { border-color: var(--accent); }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+  .btn-primary {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 8px; padding: 8px 20px; cursor: pointer;
+    font-family: var(--sans); font-size: 12px; font-weight: 700;
+  }
+  .btn-secondary {
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 16px; cursor: pointer;
+    font-family: var(--sans); font-size: 12px;
+  }
+
+  /* DATA MANAGER */
+  .data-manager-btn {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 5px 12px;
+    color: var(--text); font-family: var(--sans); font-size: 11px;
+    font-weight: 600; cursor: pointer; transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .data-manager-btn:hover { border-color: var(--glow); color: var(--glow); }
+
+  .dm-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    margin-bottom: 16px;
+  }
+  .dm-stat {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .dm-stat-val { font-size: 22px; font-weight: 800; color: var(--glow); font-family: var(--mono); }
+  .dm-stat-label { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+  .dm-section { margin-bottom: 14px; }
+  .dm-section-title {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+    color: var(--muted); text-transform: uppercase; margin-bottom: 8px;
+  }
+  .dm-btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .dm-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 14px; border-radius: 8px; font-family: var(--sans);
+    font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+    border: 1px solid var(--border);
+  }
+  .dm-btn.export { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .dm-btn.export:hover { opacity: 0.85; }
+  .dm-btn.import { background: var(--card); color: var(--text); }
+  .dm-btn.import:hover { border-color: var(--glow); color: var(--glow); }
+  .dm-btn.danger { background: var(--card); color: var(--danger); border-color: #ef444440; }
+  .dm-btn.danger:hover { background: #2a1010; }
+  .dm-btn.merge { background: var(--card); color: var(--text); }
+  .dm-btn.merge:hover { border-color: var(--warning); color: var(--warning); }
+
+  .dm-divider {
+    border: none; border-top: 1px solid var(--border); margin: 14px 0;
+  }
+
+  .dm-import-drop {
+    border: 2px dashed var(--border); border-radius: 10px;
+    padding: 20px; text-align: center; color: var(--muted);
+    font-size: 12px; cursor: pointer; transition: all 0.2s;
+    position: relative;
+  }
+  .dm-import-drop:hover, .dm-import-drop.dragover {
+    border-color: var(--glow); color: var(--glow); background: #1a1828;
+  }
+  .dm-import-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+  .dm-import-drop .drop-icon { font-size: 24px; margin-bottom: 6px; }
+
+  .dm-info-box {
+    background: #0e1a14; border: 1px solid #10b98130;
+    border-radius: 8px; padding: 10px 12px; font-size: 11px;
+    color: #6ee7b7; line-height: 1.6; margin-bottom: 14px;
+  }
+  .dm-warn-box {
+    background: #1a1208; border: 1px solid #f59e0b40;
+    border-radius: 8px; padding: 10px 12px; font-size: 11px;
+    color: var(--warning); line-height: 1.6;
+  }
+
+  /* ERROR LOG */
+  .error-log-btn {
+    position: fixed; bottom: 20px; left: 20px; z-index: 90;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 6px 12px;
+    font-family: var(--sans); font-size: 11px; font-weight: 600;
+    color: var(--muted); cursor: pointer; display: none;
+    align-items: center; gap: 6px; transition: all 0.2s;
+    box-shadow: 0 4px 12px #00000040;
+  }
+  .error-log-btn.has-errors { display: flex; border-color: var(--danger); color: var(--danger); }
+  .error-log-btn:hover { background: #1a1010; }
+  .error-count-badge {
+    background: var(--danger); color: #fff;
+    border-radius: 10px; padding: 1px 6px; font-size: 10px;
+  }
+
+  .error-log-panel {
+    position: fixed; bottom: 60px; left: 20px; z-index: 91;
+    background: var(--card); border: 1px solid var(--danger);
+    border-radius: 12px; width: 460px; max-height: 380px;
+    display: none; flex-direction: column;
+    box-shadow: 0 8px 32px #00000060;
+    overflow: hidden;
+  }
+  .error-log-panel.show { display: flex; }
+  .error-log-header {
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .error-log-title { font-size: 12px; font-weight: 700; color: var(--danger); }
+  .error-log-actions { display: flex; gap: 6px; align-items: center; }
+  .error-log-clear {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--muted); font-size: 10px; padding: 3px 8px;
+    cursor: pointer; font-family: var(--sans); transition: all 0.15s;
+  }
+  .error-log-clear:hover { color: var(--danger); border-color: var(--danger); }
+  .error-log-close {
+    background: none; border: none; cursor: pointer;
+    color: var(--muted); font-size: 14px; padding: 2px 4px;
+  }
+  .error-log-close:hover { color: var(--text); }
+  .error-log-list {
+    overflow-y: auto; flex: 1; padding: 8px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .error-entry {
+    background: var(--bg); border: 1px solid #ef444430;
+    border-radius: 8px; padding: 10px 12px;
+  }
+  .error-entry-time {
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .error-entry-msg {
+    font-size: 11px; color: #fca5a5; line-height: 1.5; word-break: break-word;
+  }
+  .error-entry-ctx {
+    font-size: 10px; color: var(--muted); margin-top: 4px; font-family: var(--mono);
+  }
+  .error-copy-btn {
+    background: none; border: 1px solid var(--border); border-radius: 4px;
+    color: var(--muted); font-size: 9px; padding: 2px 6px;
+    cursor: pointer; margin-top: 6px; font-family: var(--mono);
+    transition: all 0.15s;
+  }
+  .error-copy-btn:hover { color: var(--text); border-color: var(--muted); }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 16px;
+    font-size: 12px; z-index: 200;
+    display: none; align-items: center; gap: 8px;
+    box-shadow: 0 8px 24px #00000060;
+    animation: slideUp 0.3s ease;
+  }
+  .toast.show { display: flex; }
+  .toast.success { border-color: var(--success); }
+  .toast.error { border-color: var(--danger); }
+  @keyframes slideUp { from { transform: translateY(10px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  /* SAVE FOLDER SECTION */
+  .save-folder-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 8px;
+    transition: border-color 0.2s;
+  }
+  .save-folder-bar.active { border-color: var(--success); }
+  .save-folder-icon { font-size: 14px; flex-shrink: 0; }
+  .save-folder-info { flex: 1; overflow: hidden; }
+  .save-folder-name {
+    font-size: 11px; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .save-folder-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+  .save-folder-btn {
+    background: var(--accent); border: none; color: #fff;
+    border-radius: 6px; padding: 5px 10px; font-size: 11px; font-family: var(--sans); font-weight: 600; cursor: pointer;
+    white-space: nowrap; transition: opacity 0.2s; flex-shrink: 0;
+  }
+  .save-folder-btn:hover { opacity: 0.85; }
+  .save-folder-btn.clear { background: var(--card); color: var(--muted); border: 1px solid var(--border); }
+  .save-folder-btn.clear:hover { color: var(--danger); border-color: var(--danger); }
+
+  .autosave-toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 8px;
+  }
+  .autosave-label { font-size: 11px; color: var(--text); }
+  .autosave-sub { font-size: 10px; color: var(--muted); }
+
+  .fs-warning {
+    background: #1a1208; border: 1px solid #f59e0b40;
+    border-radius: 8px; padding: 8px 10px; margin-top: 8px;
+    font-size: 10px; color: var(--warning); line-height: 1.5; display: none;
+  }
+  .fs-warning.show { display: block; }
+
+  /* VIDEO OUTPUT */
+  .output-card video {
+    width: 100%; display: block; aspect-ratio: 16/9;
+    background: #000; border-radius: 0;
+  }
+  .output-card.video-card .output-card-info {
+    border-top: 1px solid var(--border);
+  }
+  .mode-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 700;
+    margin-left: 6px;
+  }
+  .mode-badge.image { background: #4f46e520; color: #a78bfa; }
+  .mode-badge.video { background: #10b98120; color: #34d399; }
+
+  /* VIDEO SETTINGS PANEL */
+  .video-settings { display: none; }
+  .video-settings.show { display: block; }
+  .image-settings { display: block; }
+  .image-settings.hide { display: none; }
+
+  /* QUEUE PANEL */
+  .queue-section {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+  }
+  .queue-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .queue-badge {
+    background: var(--accent); color: #fff;
+    font-size: 9px; font-weight: 700;
+    padding: 1px 7px; border-radius: 10px; font-family: var(--mono);
+  }
+  .queue-clear-btn {
+    background: none; border: none; color: var(--muted);
+    font-size: 10px; cursor: pointer; padding: 0;
+    transition: color 0.15s;
+  }
+  .queue-clear-btn:hover { color: var(--danger); }
+  .queue-list {
+    display: flex; flex-direction: column; gap: 4px;
+    max-height: 220px; overflow-y: auto;
+  }
+  .queue-item {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 10px;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px;
+  }
+  .queue-item.running { border-color: var(--accent); background: #1a1830; }
+  .queue-item.done { border-color: var(--success); opacity: 0.6; }
+  .queue-item.error { border-color: var(--danger); }
+  .queue-status-icon { font-size: 13px; flex-shrink: 0; }
+  .queue-item-info { flex: 1; overflow: hidden; }
+  .queue-item-model { font-size: 10px; color: var(--glow); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .queue-item-prompt { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .queue-item-remove { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0 2px; flex-shrink: 0; }
+  .queue-item-remove:hover { color: var(--danger); }
+  .queue-spinner {
+    width: 12px; height: 12px; border: 2px solid var(--border);
+    border-top-color: var(--glow); border-radius: 50%;
+    animation: spin 0.7s linear infinite; flex-shrink: 0;
+  }
+
+  /* ASPECT RATIO BUTTONS */
+  .aspect-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 6px;
+  }
+  .aspect-btn {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 4px; text-align: center;
+    cursor: pointer; font-size: 10px; color: var(--muted);
+    transition: all 0.15s; font-family: var(--sans);
+  }
+  .aspect-btn:hover { border-color: var(--glow); color: var(--text); }
+  .aspect-btn.active { border-color: var(--accent); color: var(--glow); background: #1a1830; }
+
+  /* FOLDER THUMB: selected ring + count badge */
+  .folder-thumb .sel-badge {
+    position: absolute; top: -5px; left: -5px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    font-size: 9px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    display: none;
+  }
+  .folder-thumb.selected .sel-badge { display: flex; }
+  .folder-thumb .del-btn {
+    position: absolute; bottom: -4px; right: -4px;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--danger); color: #fff;
+    font-size: 8px; display: none; align-items: center; justify-content: center;
+    cursor: pointer; border: none; line-height: 1; z-index: 2;
+  }
+  .folder-thumb:hover .del-btn { display: flex; }
+
+  /* Ref images count warning */
+  .ref-limit-warn {
+    font-size: 10px; color: var(--warning); margin-top: 4px; display: none;
+  }
+  .ref-limit-warn.show { display: block; }
+
+  /* IMAGE LIGHTBOX */
+  .lightbox {
+    position: fixed; inset: 0; background: #000000cc;
+    z-index: 150; display: none; align-items: center; justify-content: center;
+  }
+  .lightbox.show { display: flex; }
+  .lightbox img {
+    max-width: 90vw; max-height: 90vh;
+    border-radius: 12px; box-shadow: 0 0 60px #00000080;
+  }
+  .lightbox-close {
+    position: absolute; top: 20px; right: 20px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 50%; width: 36px; height: 36px;
+    cursor: pointer; color: var(--text); font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">✦</div>
+    Seedream Studio
+  </div>
+  <div class="header-tabs">
+    <button class="htab active" id="modeImageBtn" onclick="switchMode('image',this)">🖼 Image</button>
+    <button class="htab" id="modeVideoBtn" onclick="switchMode('video',this)">🎬 Video</button>
+  </div>
+  <div class="header-tabs" id="viewTabs" style="margin-left:4px">
+    <button class="htab active" onclick="switchTab('generate',this)">Generate</button>
+    <button class="htab" onclick="switchTab('history',this)">History</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="status-dot" id="statusDot"></div>
+  <input class="api-key-input" type="password" id="apiKeyInput" placeholder="Atlas Cloud API Key…" oninput="onApiKeyChange(this.value)">
+  <div title="API key, prompts &amp; folders are saved on your local server (SQLite). Data is shared across all devices on your network." style="cursor:help;font-size:13px;color:var(--muted);flex-shrink:0;display:flex;align-items:center;gap:4px">
+    <span id="serverDot" style="width:7px;height:7px;border-radius:50%;background:var(--muted);display:inline-block;transition:background 0.3s"></span>
+    💾
+  </div>
+  <a class="data-manager-btn" href="/gallery" style="text-decoration:none">🖼 Gallery</a>
+  <button class="data-manager-btn" onclick="openDataManager()">⬡ Data Manager</button>
+</header>
+
+<!-- LEFT PANEL: Prompts + Folders -->
+<aside class="left-panel">
+
+  <!-- SAVED PROMPTS -->
+  <div class="panel-section">
+    <div class="panel-section-header">
+      Saved Prompts
+      <button onclick="openSavePromptModal()" title="New Prompt">＋</button>
+    </div>
+    <div class="prompt-list" id="promptList"></div>
+  </div>
+
+  <!-- FOLDERS -->
+  <div class="panel-section" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+    <div class="panel-section-header">
+      Reference Folders
+      <button onclick="addFolder()" title="New Folder">＋</button>
+    </div>
+    <div class="folder-list" id="folderList"></div>
+  </div>
+
+</aside>
+
+<!-- CENTER PANEL -->
+<main class="center-panel">
+  <div class="generate-area" id="generateArea">
+    <div class="empty-state" id="emptyState">
+      <div class="empty-icon">✦</div>
+      <div class="empty-title">Ready to generate</div>
+      <div class="empty-sub">Enter a prompt below, choose your Seedream model, and click Generate.</div>
+    </div>
+    <div class="output-grid" id="outputGrid" style="display:none"></div>
+  </div>
+
+  <!-- Reference images strip -->
+  <div id="refStrip" style="padding:0 20px 6px;display:none;">
+    <div class="ref-images-strip" id="refImagesStrip">
+      <span class="ref-label">Reference images:</span>
+    </div>
+  </div>
+
+  <!-- PROMPT BAR -->
+  <div class="prompt-bar" id="promptBar">
+    <div class="prompt-input-row">
+      <textarea class="prompt-textarea" id="promptTextarea" placeholder="Describe your image…" rows="2"></textarea>
+      <button class="generate-btn" id="generateBtn" onclick="generate()">
+        <span id="generateBtnIcon">✦</span>
+        <span id="generateBtnText">Generate</span>
+      </button>
+    </div>
+    <div class="prompt-options">
+      <!-- IMAGE model select -->
+      <select class="select-styled image-settings" id="modelSelect">
+        <optgroup label="── Seedream Image ──">
+          <option value="bytedance/seedream-v3">Seedream v3 (T2I)</option>
+          <option value="bytedance/seedream-v3.1">Seedream v3.1 (T2I)</option>
+          <option value="bytedance/seedream-v4" selected>Seedream v4 (T2I)</option>
+          <option value="bytedance/seedream-v4.5">Seedream v4.5 (T2I)</option>
+          <option value="bytedance/seedream-v4.5/sequential">Seedream v4.5 Sequential</option>
+          <option value="bytedance/seedream-v4.5/edit">Seedream v4.5 Edit (I2I)</option>
+          <option value="bytedance/seedream-v4/edit">Seedream v4 Edit (I2I)</option>
+          <option value="bytedance/seedream-v4/edit-sequential">Seedream v4 Edit Sequential</option>
+          <option value="bytedance/seedream-v5.0-lite">Seedream v5.0 Lite (T2I)</option>
+          <option value="bytedance/seedream-v5.0-lite/edit">Seedream v5.0 Lite Edit (I2I)</option>
+          <option value="bytedance/seedream-v5.0-lite/edit-sequential">Seedream v5.0 Lite Edit Sequential</option>
+        </optgroup>
+      </select>
+      <!-- VIDEO model select -->
+      <select class="select-styled video-settings" id="videoModelSelect">
+        <optgroup label="── Seedance v1.5 Pro ──">
+          <option value="bytedance/seedance-v1.5-pro/image-to-video" selected>Seedance v1.5 Pro Image-to-Video</option>
+          <option value="bytedance/seedance-v1.5-pro/image-to-video-fast">Seedance v1.5 Pro Image-to-Video Fast</option>
+          <option value="bytedance/seedance-v1.5-pro/text-to-video">Seedance v1.5 Pro Text-to-Video</option>
+          <option value="bytedance/seedance-v1.5-pro/text-to-video-fast">Seedance v1.5 Pro Text-to-Video Fast</option>
+        </optgroup>
+        <optgroup label="── Seedance v1 Pro ──">
+          <option value="bytedance/seedance-v1-pro-i2v-1080p">Seedance v1 Pro Image-to-Video 1080p</option>
+          <option value="bytedance/seedance-v1-pro-i2v-720p">Seedance v1 Pro Image-to-Video 720p</option>
+          <option value="bytedance/seedance-v1-pro-i2v-480p">Seedance v1 Pro Image-to-Video 480p</option>
+          <option value="bytedance/seedance-v1-pro-t2v-1080p">Seedance v1 Pro Text-to-Video 1080p</option>
+          <option value="bytedance/seedance-v1-pro-t2v-720p">Seedance v1 Pro Text-to-Video 720p</option>
+          <option value="bytedance/seedance-v1-pro-t2v-480p">Seedance v1 Pro Text-to-Video 480p</option>
+        </optgroup>
+        <optgroup label="── Seedance v1 Lite ──">
+          <option value="bytedance/seedance-v1-lite-i2v-720p">Seedance v1 Lite Image-to-Video 720p</option>
+          <option value="bytedance/seedance-v1-lite-i2v-480p">Seedance v1 Lite Image-to-Video 480p</option>
+          <option value="bytedance/seedance-v1-lite-t2v-720p">Seedance v1 Lite Text-to-Video 720p</option>
+          <option value="bytedance/seedance-v1-lite-t2v-480p">Seedance v1 Lite Text-to-Video 480p</option>
+        </optgroup>
+      </select>
+
+      <!-- IMAGE-only options -->
+      <select class="select-styled image-settings" id="sizeSelect">
+        <option value="1024*1024">1024×1024</option>
+        <option value="1024*768">1024×768</option>
+        <option value="768*1024">768×1024</option>
+        <option value="1280*720">1280×720</option>
+        <option value="720*1280">720×1280</option>
+        <option value="2048*2048">2048×2048 (4K)</option>
+        <option value="2048*1536">2048×1536</option>
+        <option value="1536*2048">1536×2048</option>
+      </select>
+      <select class="select-styled image-settings" id="countSelect">
+        <option value="1">1 image</option>
+        <option value="2">2 images</option>
+        <option value="4" selected>4 images</option>
+        <option value="6">6 images</option>
+      </select>
+
+      <!-- VIDEO-only options -->
+      <select class="select-styled video-settings" id="aspectSelect">
+        <option value="16:9">16:9 Landscape</option>
+        <option value="9:16">9:16 Portrait</option>
+        <option value="1:1">1:1 Square</option>
+        <option value="4:3">4:3</option>
+        <option value="3:4">3:4</option>
+        <option value="21:9">21:9 Ultrawide</option>
+      </select>
+      <select class="select-styled video-settings" id="durationSelect">
+        <option value="4">4s</option>
+        <option value="5">5s</option>
+        <option value="6">6s</option>
+        <option value="8" selected>8s</option>
+        <option value="10">10s</option>
+        <option value="12">12s</option>
+        <option value="15">15s</option>
+      </select>
+
+      <button class="save-prompt-btn" onclick="saveCurrentPrompt()">💾 Save Prompt</button>
+      <button class="save-prompt-btn image-settings" onclick="saveImageDefaults()">💾 Save Defaults</button>
+    </div>
+  </div>
+</main>
+
+<!-- RIGHT PANEL -->
+<aside class="right-panel">
+  <div class="right-section">
+    <div class="right-section-title">Generation Settings</div>
+
+    <!-- Image settings -->
+    <div class="image-settings" id="imgSettings">
+      <div class="param-row">
+        <span class="param-label">Guidance Scale</span>
+        <span class="param-value" id="guidanceVal">7.5</span>
+      </div>
+      <input type="range" min="1" max="20" step="0.5" value="7.5" oninput="document.getElementById('guidanceVal').textContent=this.value">
+      <div class="toggle-row">
+        <span class="toggle-label">Enable Sync Mode</span>
+        <button class="toggle" id="syncToggle" onclick="this.classList.toggle('on')"></button>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">PNG Output</span>
+        <button class="toggle" id="pngToggle" onclick="this.classList.toggle('on')"></button>
+      </div>
+    </div>
+
+    <!-- Video settings -->
+    <div class="video-settings" id="vidSettings">
+      <div class="toggle-row">
+        <span class="toggle-label">Generate Audio</span>
+        <button class="toggle on" id="audioToggle" onclick="this.classList.toggle('on')"></button>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Camera Fixed</span>
+        <button class="toggle" id="cameraFixedToggle" onclick="this.classList.toggle('on')"></button>
+      </div>
+      <div class="param-row" style="margin-top:8px">
+        <span class="param-label" style="font-size:10px;color:var(--muted)">Resolution from model name</span>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.5">
+        For I2V models, select a reference image from a folder first. Duration and aspect ratio are set in the prompt bar.
+      </div>
+    </div>
+  </div>
+
+  <div class="right-section">
+    <div class="right-section-title">Auto-Save Output Folder</div>
+
+    <div class="save-folder-bar" id="saveFolderBar">
+      <span class="save-folder-icon">📂</span>
+      <div class="save-folder-info">
+        <div class="save-folder-name" id="saveFolderName">No folder selected</div>
+        <div class="save-folder-sub" id="saveFolderSub">Images saved to browser only</div>
+      </div>
+      <button class="save-folder-btn" id="saveFolderBtn" onclick="pickSaveFolder()">Choose</button>
+    </div>
+
+    <div class="autosave-toggle-row">
+      <div>
+        <div class="autosave-label">Auto-save on generate</div>
+        <div class="autosave-sub">Saves every output automatically</div>
+      </div>
+      <button class="toggle" id="autosaveToggle" onclick="toggleAutosave()"></button>
+    </div>
+
+    <div class="fs-warning" id="fsWarning">
+      ⚠ Your browser doesn't support the File System Access API. Use Chrome or Edge for folder auto-save. Manual download still works.
+    </div>
+
+    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap" id="saveFolderActions" style="display:none">
+      <button class="save-folder-btn clear" onclick="clearSaveFolder()">✕ Clear folder</button>
+      <button class="save-folder-btn" onclick="openSaveFolder()" style="background:var(--card);color:var(--text);border:1px solid var(--border)">📂 Change</button>
+    </div>
+  </div>
+
+  <div style="padding:12px 16px 8px;border-bottom:1px solid var(--border)">
+    <div class="right-section-title">Active Reference</div>
+    <div id="refSummary" style="font-size:11px;color:var(--muted)">No reference images selected.<br>Click a folder image to add as reference.</div>
+  </div>
+
+  <!-- QUEUE PANEL -->
+  <div class="queue-section" id="queueSection" style="display:none">
+    <div class="queue-header">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="right-section-title" style="margin-bottom:0">Queue</span>
+        <span class="queue-badge" id="queueBadge">0</span>
+      </div>
+      <button class="queue-clear-btn" onclick="clearQueue()" title="Remove pending items">Clear pending</button>
+    </div>
+    <div class="queue-list" id="queueList"></div>
+  </div>
+
+  <div style="padding:12px 16px 8px;border-bottom:1px solid var(--border)">
+    <div class="right-section-title">Generation History</div>
+  </div>
+  <div class="history-list" id="historyList">
+    <div style="font-size:11px;color:var(--muted);text-align:center;margin-top:16px">No history yet.</div>
+  </div>
+</aside>
+
+<!-- SAVE PROMPT MODAL -->
+<div class="modal-overlay" id="saveModal">
+  <div class="modal">
+    <h3>Save Prompt</h3>
+    <input class="modal-input" id="promptNameInput" placeholder="Prompt name…">
+    <textarea class="modal-textarea" id="promptTextInput" placeholder="Prompt text…" rows="4"></textarea>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('saveModal')">Cancel</button>
+      <button class="btn-primary" onclick="confirmSavePrompt()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD FOLDER MODAL -->
+<div class="modal-overlay" id="folderModal">
+  <div class="modal">
+    <h3>New Folder</h3>
+    <input class="modal-input" id="folderNameInput" placeholder="Folder name…">
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('folderModal')">Cancel</button>
+      <button class="btn-primary" onclick="confirmAddFolder()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- DATA MANAGER MODAL -->
+<div class="modal-overlay" id="dataManagerModal">
+  <div class="modal" style="width:500px;max-height:90vh;overflow-y:auto">
+    <h3 style="margin-bottom:6px">⬡ Data Manager</h3>
+    <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Export your data as a portable <code style="background:var(--bg);padding:1px 5px;border-radius:4px;font-family: var(--mono)">.json</code> file to back up or move to another browser / machine.</p>
+
+    <!-- Stats -->
+    <div class="dm-grid" id="dmStats"></div>
+
+    <div class="dm-info-box">
+      ✓ Exports include: API key, all saved prompts, all reference folders + images, and generation history.<br>
+      ✓ Reference images are embedded as base64 — the file is fully self-contained.<br>
+      ✓ Import on any machine by loading the file back here.
+    </div>
+
+    <!-- Export -->
+    <div class="dm-section">
+      <div class="dm-section-title">Export</div>
+      <div class="dm-btn-row">
+        <button class="dm-btn export" onclick="exportData()">⬇ Export All Data</button>
+        <button class="dm-btn export" style="background:var(--card);color:var(--text);border-color:var(--border)" onclick="exportPromptsOnly()">⬇ Prompts Only</button>
+        <button class="dm-btn export" style="background:var(--card);color:var(--text);border-color:var(--border)" onclick="exportFoldersOnly()">⬇ Folders Only</button>
+      </div>
+    </div>
+
+    <hr class="dm-divider">
+
+    <!-- Import -->
+    <div class="dm-section">
+      <div class="dm-section-title">Import</div>
+      <div class="dm-import-drop" id="importDrop">
+        <input type="file" accept=".json" onchange="handleImportFile(this)">
+        <div class="drop-icon">📥</div>
+        <div>Drop a <strong>.json</strong> export file here, or click to browse</div>
+        <div style="margin-top:4px;font-size:10px;color:var(--muted)">Exported from Seedream Studio</div>
+      </div>
+      <div class="dm-btn-row" style="margin-top:10px">
+        <button class="dm-btn merge" onclick="triggerImport('replace')">↺ Replace All</button>
+        <button class="dm-btn merge" onclick="triggerImport('merge')">⊕ Merge (keep existing)</button>
+      </div>
+      <div id="importModeNote" style="font-size:10px;color:var(--muted);margin-top:6px">
+        <strong>Replace</strong>: overwrites everything with the imported file.<br>
+        <strong>Merge</strong>: adds imported prompts/folders to your existing ones (no duplicates).
+      </div>
+    </div>
+
+    <hr class="dm-divider">
+
+    <!-- Danger zone -->
+    <div class="dm-section">
+      <div class="dm-section-title">Danger Zone</div>
+      <div class="dm-btn-row">
+        <button class="dm-btn danger" onclick="clearAllData()">🗑 Clear All Local Data</button>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn-secondary" onclick="closeModal('dataManagerModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ERROR LOG BUTTON -->
+<button class="error-log-btn" id="errorLogBtn" onclick="toggleErrorLog()">
+  ⚠ Errors <span class="error-count-badge" id="errorCountBadge">0</span>
+</button>
+
+<!-- ERROR LOG PANEL -->
+<div class="error-log-panel" id="errorLogPanel">
+  <div class="error-log-header">
+    <span class="error-log-title">⚠ Error Log</span>
+    <div class="error-log-actions">
+      <button class="error-log-clear" onclick="clearErrorLog()">Clear all</button>
+      <button class="error-log-close" onclick="toggleErrorLog()">✕</button>
+    </div>
+  </div>
+  <div class="error-log-list" id="errorLogList">
+    <div style="font-size:11px;color:var(--muted);text-align:center;padding:16px">No errors logged.</div>
+  </div>
+</div>
+
+<!-- LIGHTBOX -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <button class="lightbox-close" onclick="closeLightbox()">✕</button>
+  <img id="lightboxImg" src="" alt="" style="max-width:90vw;max-height:90vh;border-radius:12px">
+  <video id="lightboxVideo" controls style="display:none;max-width:90vw;max-height:90vh;border-radius:12px" onclick="event.stopPropagation()"></video>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast">
+  <span id="toastIcon">✓</span>
+  <span id="toastMsg"></span>
+</div>
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+// ============================================================
+// SERVER STORAGE — replaces localStorage with /api/store
+// ============================================================
+const SERVER = ''; // same origin
+
+async function serverGet(key, fallback = null) {
+  try {
+    const r = await fetch(`${SERVER}/api/store/${encodeURIComponent(key)}`);
+    if (!r.ok) return fallback;
+    const d = await r.json();
+    try { return JSON.parse(d.value); } catch { return d.value; }
+  } catch { return fallback; }
+}
+
+async function serverSet(key, value) {
+  try {
+    await fetch(`${SERVER}/api/store/${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: typeof value === 'string' ? value : JSON.stringify(value) }),
+    });
+  } catch (e) { console.warn('serverSet failed', key, e); }
+}
+
+async function serverDel(key) {
+  try {
+    await fetch(`${SERVER}/api/store/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  } catch {}
+}
+
+async function serverSetBulk(entries) {
+  try {
+    await fetch(`${SERVER}/api/store-bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    });
+  } catch (e) { console.warn('serverSetBulk failed', e); }
+}
+
+// Save a generated output URL to the server permanently
+async function saveOutputToServer(url, filename) {
+  try {
+    const r = await fetch(`${SERVER}/api/save-output`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, filename }),
+    });
+    if (!r.ok) return url; // fallback to original URL
+    const d = await r.json();
+    return d.localUrl || url;
+  } catch { return url; }
+}
+
+async function fetchSavedOutputs() {
+  try {
+    const r = await fetch(`${SERVER}/api/outputs`);
+    if (!r.ok) return [];
+    const d = await r.json();
+    return Array.isArray(d.files) ? d.files : [];
+  } catch {
+    return [];
+  }
+}
+
+function getImageSrc(img) {
+  return String(img?.src || img?.localUrl || img?.url || img?.dataUrl || '');
+}
+
+function getRefSrc(ref) {
+  return String(ref?.src || ref?.dataUrl || '');
+}
+
+async function uploadRefFileToServer(file) {
+  const q = encodeURIComponent(file.name || 'ref.jpg');
+  const resp = await fetch(`${SERVER}/api/upload-ref?filename=${q}`, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+  });
+  if (!resp.ok) throw new Error(`Upload failed (HTTP ${resp.status})`);
+  const data = await resp.json();
+  if (!data.localUrl) throw new Error('Upload failed: no local URL returned');
+  return data.localUrl;
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('FileReader error'));
+    reader.onload = e => resolve(String(e.target?.result || ''));
+    reader.readAsDataURL(file);
+  });
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('FileReader error'));
+    reader.onload = e => resolve(String(e.target?.result || ''));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function refToDataUrl(ref) {
+  const direct = String(ref?.dataUrl || '');
+  if (direct.startsWith('data:image/')) return direct;
+  const src = getRefSrc(ref);
+  if (!src) throw new Error('Reference image has no source');
+  if (src.startsWith('data:image/')) return src;
+  const resp = await fetch(src);
+  if (!resp.ok) throw new Error(`Could not read reference ${src} (HTTP ${resp.status})`);
+  const blob = await resp.blob();
+  return blobToDataUrl(blob);
+}
+
+async function prepareJobRefs(refs) {
+  const out = [];
+  for (const r of refs || []) {
+    const dataUrl = await refToDataUrl(r);
+    out.push({ dataUrl, src: getRefSrc(r), name: r.name || '' });
+  }
+  return out;
+}
+
+// ── Runtime state ──────────────────────────────────────────────────────────
+let apiKey    = '';
+let prompts   = [];
+let folders   = [];
+let history   = [];
+let refImages = [];
+let currentTab = 'generate';
+
+const DEFAULT_IMAGE_SETTINGS = {
+  model: 'bytedance/seedream-v4.5/edit',
+  size: '2048*2048',
+  count: 1,
+};
+
+function optionExists(selectEl, value) {
+  return !!selectEl && [...selectEl.options].some(o => o.value === String(value));
+}
+
+function applyImageDefaults(defaults) {
+  const d = defaults || DEFAULT_IMAGE_SETTINGS;
+  const modelEl = document.getElementById('modelSelect');
+  const sizeEl = document.getElementById('sizeSelect');
+  const countEl = document.getElementById('countSelect');
+
+  if (optionExists(modelEl, d.model)) modelEl.value = d.model;
+  if (optionExists(sizeEl, d.size)) sizeEl.value = d.size;
+  if (optionExists(countEl, d.count)) countEl.value = String(d.count);
+}
+
+function currentImageDefaults() {
+  return {
+    model: document.getElementById('modelSelect').value,
+    size: document.getElementById('sizeSelect').value,
+    count: parseInt(document.getElementById('countSelect').value, 10) || 1,
+  };
+}
+
+// ── Polling: detect changes from other devices ─────────────────────────────
+let lastKnownVersion = 0;
+let pollActive = false;
+
+async function startPolling() {
+  if (pollActive) return;
+  pollActive = true;
+  while (true) {
+    await new Promise(r => setTimeout(r, 5000)); // check every 5s
+    try {
+      const r = await fetch(`${SERVER}/api/version`);
+      if (!r.ok) continue;
+      const { version } = await r.json();
+      if (version > lastKnownVersion && lastKnownVersion !== 0) {
+        console.log('🔄 Server data changed — syncing...');
+        await syncFromServer();
+      }
+      lastKnownVersion = version;
+    } catch {}
+  }
+}
+
+async function syncFromServer() {
+  const [savedPrompts, savedFolders, savedHistory] = await Promise.all([
+    serverGet('atlasPrompts', null),
+    serverGet('atlasFolders', null),
+    serverGet('atlasHistory', []),
+  ]);
+
+  let changed = false;
+
+  if (Array.isArray(savedPrompts) && JSON.stringify(savedPrompts) !== JSON.stringify(prompts)) {
+    prompts = savedPrompts;
+    renderPrompts();
+    changed = true;
+  }
+  if (Array.isArray(savedFolders) && JSON.stringify(savedFolders) !== JSON.stringify(folders)) {
+    folders = savedFolders;
+    renderFolders();
+    changed = true;
+  }
+  if (Array.isArray(savedHistory) && JSON.stringify(savedHistory) !== JSON.stringify(history)) {
+    history = savedHistory;
+    renderHistory();
+    restoreOutputGrid();
+    changed = true;
+  }
+
+  if (changed) showToast('Synced from server', 'success');
+}
+
+// Restore output grid from history (outputs that were saved to server)
+function restoreOutputGrid() {
+  const grid  = document.getElementById('outputGrid');
+  const empty = document.getElementById('emptyState');
+  if (!history.length) return;
+
+  // Only add items not already in the grid (match by url)
+  const existingUrls = new Set(
+    [...grid.querySelectorAll('img,video')].map(el => el.src)
+  );
+
+  let added = 0;
+  for (const h of [...history].reverse()) {
+    const outputs = h.outputs || (h.thumb ? [h.thumb] : []);
+    for (const outputUrl of outputs) {
+      const fullUrl = outputUrl.startsWith('/') ? window.location.origin + outputUrl : outputUrl;
+      if (existingUrls.has(fullUrl) || existingUrls.has(outputUrl)) continue;
+
+      const card = document.createElement('div');
+      const ts   = new Date(h.time || h.id).toLocaleTimeString();
+
+      if (h.type === 'video') {
+        card.className = 'output-card video-card';
+        card.innerHTML = `
+          <video src="${outputUrl}" controls playsinline style="width:100%;aspect-ratio:16/9;background:#000;display:block"></video>
+          <div class="output-card-info">
+            <span>${escHtml(h.model)} · ${ts} <span class="mode-badge video">VID</span></span>
+            <div style="display:flex;gap:6px">
+              <button class="output-card-dl" onclick="downloadVideo('${outputUrl}')" title="Download">⬇</button>
+              <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
+            </div>
+          </div>`;
+      } else {
+        card.className = 'output-card';
+        card.innerHTML = `
+          <img src="${outputUrl}" alt="Generated" loading="lazy" onclick="openLightbox('${outputUrl}')">
+          <div class="output-card-info">
+            <span>${escHtml(h.model)} · ${ts} <span class="mode-badge image">IMG</span></span>
+            <div style="display:flex;gap:6px">
+              <button class="output-card-dl" onclick="downloadImage('${outputUrl}')" title="Download">⬇</button>
+              <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
+            </div>
+          </div>`;
+      }
+      grid.appendChild(card);
+      added++;
+    }
+  }
+
+  if (added > 0 || grid.children.length > 0) {
+    grid.style.display = 'grid';
+    empty.style.display = 'none';
+  }
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+async function bootFromServer() {
+  const [savedKey, savedPrompts, savedFolders, savedHistory, savedAutosave, savedImageDefaults] = await Promise.all([
+    serverGet('atlasApiKey', ''),
+    serverGet('atlasPrompts', null),
+    serverGet('atlasFolders', null),
+    serverGet('atlasHistory', []),
+    serverGet('atlasAutosave', '0'),
+    serverGet('atlasImageDefaults', null),
+  ]);
+
+  apiKey = savedKey || '';
+  document.getElementById('apiKeyInput').value = apiKey;
+  if (apiKey) document.getElementById('statusDot').classList.add('connected');
+
+  if (Array.isArray(savedPrompts)) {
+    prompts = savedPrompts;
+  } else {
+    prompts = [
+      { id: Date.now()+1, name:'Cinematic Portrait',  text:'Cinematic close-up portrait, dramatic side lighting, shallow depth of field, film grain, 35mm' },
+      { id: Date.now()+2, name:'Fantasy Landscape',   text:'Epic fantasy landscape with floating islands, waterfalls, magical glowing trees, volumetric light, ultra-detailed' },
+      { id: Date.now()+3, name:'Product Shot',        text:'Minimalist product photography, white background, professional studio lighting, sharp focus, commercial quality' },
+      { id: Date.now()+4, name:'Poster Design',       text:'Bold retro-futuristic poster design, geometric shapes, vivid neon colors, Bauhaus-inspired typography, vector art style' },
+    ];
+    await serverSet('atlasPrompts', prompts);
+  }
+
+  if (Array.isArray(savedFolders)) {
+    folders = savedFolders;
+  } else {
+    folders = [
+      { id: 'f1', name: 'Style References', color: '#f59e0b', images: [] },
+      { id: 'f2', name: 'Character Refs',   color: '#f59e0b', images: [] },
+      { id: 'f3', name: 'Environment',      color: '#f59e0b', images: [] },
+    ];
+    await serverSet('atlasFolders', folders);
+  }
+
+  history = Array.isArray(savedHistory) ? savedHistory : [];
+  if (!history.length) {
+    const files = await fetchSavedOutputs();
+    if (files.length) {
+      history = files.slice(0, 50).map((f, i) => {
+        const name = f.name || '';
+        const isVideo = /\.(mp4|webm)$/i.test(name);
+        const outputUrl = `/outputs/${name}`;
+        const timestamp = new Date(f.mtime || Date.now()).toLocaleTimeString();
+        return {
+          id: Date.now() - i,
+          type: isVideo ? 'video' : 'image',
+          model: 'Recovered',
+          prompt: 'Recovered from server output',
+          thumb: outputUrl,
+          videoUrl: isVideo ? outputUrl : '',
+          outputs: [outputUrl],
+          time: timestamp,
+        };
+      });
+      await serverSet('atlasHistory', history);
+    }
+  }
+
+  autosaveEnabled = savedAutosave === '1' || savedAutosave === true;
+  if (autosaveEnabled) document.getElementById('autosaveToggle').classList.add('on');
+
+  if (savedImageDefaults && typeof savedImageDefaults === 'object') {
+    applyImageDefaults(savedImageDefaults);
+  } else {
+    applyImageDefaults(DEFAULT_IMAGE_SETTINGS);
+    await serverSet('atlasImageDefaults', DEFAULT_IMAGE_SETTINGS);
+  }
+
+  renderPrompts(); renderFolders(); renderHistory(); renderRefStrip();
+  restoreOutputGrid();
+  updateSaveFolderUI();
+  initSaveFolder();
+
+  // Get current version then start polling
+  try {
+    const r = await fetch(`${SERVER}/api/version`);
+    if (r.ok) { const d = await r.json(); lastKnownVersion = d.version; }
+  } catch {}
+  startPolling();
+
+  const dot = document.getElementById('serverDot');
+  if (dot) dot.classList.add('connected');
+  console.log('✅ Seedream Studio: loaded from server, polling started');
+}
+
+bootFromServer();
+
+// ============================================================
+// API KEY
+// ============================================================
+function onApiKeyChange(val) {
+  apiKey = val.trim();
+  serverSet('atlasApiKey', apiKey);
+  document.getElementById('statusDot').classList.toggle('connected', apiKey.length > 10);
+}
+
+// ============================================================
+// PROMPTS
+// ============================================================
+function renderPrompts() {
+  const el = document.getElementById('promptList');
+  if (!prompts.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 6px 8px">No saved prompts yet.</div>';
+    return;
+  }
+  el.innerHTML = prompts.map((p, i) => `
+    <div class="prompt-item" onclick="usePrompt(${i})">
+      <div style="flex:1;overflow:hidden">
+        <div class="prompt-name">${escHtml(p.name)}</div>
+        <div class="prompt-text">${escHtml(p.text)}</div>
+      </div>
+      <div class="prompt-actions">
+        <button class="icon-btn use" onclick="event.stopPropagation();usePrompt(${i})" title="Use">↑</button>
+        <button class="icon-btn" onclick="event.stopPropagation();deletePrompt(${i})" title="Delete">✕</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function usePrompt(i) {
+  document.getElementById('promptTextarea').value = prompts[i].text;
+}
+
+function deletePrompt(i) {
+  prompts.splice(i, 1);
+  saveData();
+  renderPrompts();
+}
+
+function openSavePromptModal() {
+  document.getElementById('promptNameInput').value = '';
+  document.getElementById('promptTextInput').value = document.getElementById('promptTextarea').value;
+  document.getElementById('saveModal').classList.add('show');
+}
+
+function saveCurrentPrompt() {
+  document.getElementById('promptNameInput').value = '';
+  document.getElementById('promptTextInput').value = document.getElementById('promptTextarea').value;
+  document.getElementById('saveModal').classList.add('show');
+}
+
+async function saveImageDefaults() {
+  const defaults = currentImageDefaults();
+  await serverSet('atlasImageDefaults', defaults);
+  showToast('Default image options saved', 'success');
+}
+
+function confirmSavePrompt() {
+  const name = document.getElementById('promptNameInput').value.trim();
+  const text = document.getElementById('promptTextInput').value.trim();
+  if (!name || !text) { showToast('Name and prompt required', 'error'); return; }
+  prompts.unshift({ name, text });
+  saveData();
+  renderPrompts();
+  closeModal('saveModal');
+  showToast('Prompt saved!', 'success');
+}
+
+// ============================================================
+// FOLDERS
+// ============================================================
+function renderFolders() {
+  const el = document.getElementById('folderList');
+  if (!folders.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 6px">No folders yet.</div>';
+    return;
+  }
+  // Remember open state
+  const openSet = new Set();
+  folders.forEach((_, fi) => {
+    const existing = document.getElementById(`folder-${fi}`);
+    if (existing && existing.classList.contains('open')) openSet.add(fi);
+  });
+
+  // Build folder shells WITHOUT any base64 in innerHTML
+  el.innerHTML = folders.map((f, fi) => {
+    const selCount = f.images.filter(img => {
+      const src = getImageSrc(img);
+      return src && refImages.some(r => getRefSrc(r) === src);
+    }).length;
+    const isOpen = openSet.has(fi);
+    return `
+    <div class="folder-item${isOpen ? ' open' : ''}" id="folder-${fi}">
+      <div class="folder-header" onclick="toggleFolder(${fi})">
+        <span class="folder-icon">📁</span>
+        <span class="folder-name">${escHtml(f.name)}</span>
+        <span class="folder-count" id="folder-count-${fi}">${selCount ? selCount + '/' : ''}${f.images.length}</span>
+        <span class="folder-chevron">▶</span>
+      </div>
+      <div class="folder-images" id="folderImages-${fi}"></div>
+    </div>`
+  }).join('');
+
+  // Now populate each folder's image strip using real DOM nodes
+  folders.forEach((f, fi) => {
+    const imagesEl = document.getElementById(`folderImages-${fi}`);
+    f.images.forEach((img, ii) => imagesEl.appendChild(buildThumbNode(fi, ii, img)));
+    imagesEl.appendChild(makeAddBtn(fi));
+  });
+}
+
+// Build a thumb DOM node directly — used when we need to append without innerHTML
+function buildThumbNode(fi, ii, img) {
+  const src = getImageSrc(img);
+  const isSelected = src && refImages.some(r => getRefSrc(r) === src);
+  const selIdx = refImages.findIndex(r => getRefSrc(r) === src);
+  const orderNum = selIdx >= 0 ? selIdx + 1 : '';
+
+  const div = document.createElement('div');
+  div.className = `folder-thumb${isSelected ? ' selected' : ''}`;
+  div.id = `thumb-${fi}-${ii}`;
+  div.dataset.fi = fi;
+  div.dataset.ii = ii;
+  div.title = img.name;
+  div.onclick = () => toggleRefImage(fi, ii);
+
+  const imgEl = document.createElement('img');
+  imgEl.src = src;   // set src directly, never via innerHTML
+  imgEl.alt = img.name;
+  div.appendChild(imgEl);
+
+  const badge = document.createElement('span');
+  badge.className = 'sel-badge';
+  badge.textContent = orderNum;
+  div.appendChild(badge);
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'del-btn';
+  delBtn.title = 'Remove';
+  delBtn.textContent = '✕';
+  delBtn.onclick = (e) => { e.stopPropagation(); deleteImageFromFolder(fi, ii); };
+  div.appendChild(delBtn);
+
+  return div;
+}
+
+// Rebuild only the thumbs inside one folder's image strip, keeping folder open/closed state intact
+function rebuildFolderImages(fi) {
+  const folder = folders[fi];
+  const imagesEl = document.getElementById(`folderImages-${fi}`);
+  if (!imagesEl) { renderFolders(); return; }
+
+  // Remove old thumbs and add-btn
+  imagesEl.querySelectorAll('.folder-thumb').forEach(t => t.remove());
+  const oldAddBtn = imagesEl.querySelector('.folder-add-btn');
+  if (oldAddBtn) oldAddBtn.remove();
+
+  // Insert fresh thumbs as real DOM nodes (src set directly, no innerHTML)
+  folder.images.forEach((img, ii) => {
+    imagesEl.appendChild(buildThumbNode(fi, ii, img));
+  });
+
+  // Re-add the + button
+  imagesEl.appendChild(makeAddBtn(fi));
+
+  // Update counter badge
+  const selCount = folder.images.filter(img => {
+    const src = getImageSrc(img);
+    return src && refImages.some(r => getRefSrc(r) === src);
+  }).length;
+  const countEl = document.getElementById(`folder-count-${fi}`);
+  if (countEl) countEl.textContent = `${selCount ? selCount + '/' : ''}${folder.images.length}`;
+}
+
+function makeAddBtn(fi) {
+  const btn = document.createElement('div');
+  btn.className = 'folder-add-btn';
+  btn.title = 'Add images';
+  btn.textContent = '＋';
+
+  btn.addEventListener('click', () => {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.multiple = true;
+    // Keep it in DOM so Firefox/iOS reliably fire "change"
+    inp.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+    document.body.appendChild(inp);
+    const cleanup = () => { try { document.body.removeChild(inp); } catch(e) {} };
+    inp.onchange = () => addImagesToFolder(fi, inp, cleanup);
+    // Safety GC in case no event fires
+    setTimeout(() => { if (document.body.contains(inp)) cleanup(); }, 60000);
+    inp.click();
+  });
+
+  return btn;
+}
+
+function patchThumb(fi, ii) {
+  const folder = folders[fi];
+  if (!folder) return;
+
+  // Update each thumb in this folder (selection ring + order numbers)
+  folder.images.forEach((img2, ii2) => {
+    const el = document.getElementById(`thumb-${fi}-${ii2}`);
+    if (!el) return;
+    const selIdx2 = refImages.findIndex(r => getRefSrc(r) === getImageSrc(img2));
+    const isSelected2 = selIdx2 >= 0;
+    el.className = `folder-thumb${isSelected2 ? ' selected' : ''}`;
+    const badge = el.querySelector('.sel-badge');
+    if (badge) badge.textContent = isSelected2 ? String(selIdx2 + 1) : '';
+  });
+
+  // Counter badge (selected/total)
+  const selCount = folder.images.filter(img => {
+    const src = getImageSrc(img);
+    return src && refImages.some(r => getRefSrc(r) === src);
+  }).length;
+  const countEl = document.getElementById(`folder-count-${fi}`);
+  if (countEl) countEl.textContent = `${selCount ? selCount + '/' : ''}${folder.images.length}`;
+}
+
+function toggleFolder(fi) {
+  document.getElementById(`folder-${fi}`).classList.toggle('open');
+}
+
+function addFolder() {
+  document.getElementById('folderNameInput').value = '';
+  document.getElementById('folderModal').classList.add('show');
+}
+
+function confirmAddFolder() {
+  const name = document.getElementById('folderNameInput').value.trim();
+  if (!name) return;
+  folders.push({ name, images: [] });
+  saveData();
+  renderFolders();
+  closeModal('folderModal');
+}
+
+async function addImagesToFolder(fi, input, onDone) {
+  const files = Array.from(input.files || []);
+  if (!files.length) { if (onDone) onDone(); return; }
+
+  const folder = folders[fi];
+  if (!folder) { showToast('Folder not found', 'error'); if (onDone) onDone(); return; }
+
+  const imagesEl = document.getElementById(`folderImages-${fi}`);
+  const folderEl  = document.getElementById(`folder-${fi}`);
+
+  // Ensure folder is open immediately for feedback
+  if (folderEl && !folderEl.classList.contains('open')) folderEl.classList.add('open');
+
+  let loaded = 0;
+  let failed = 0;
+
+  for (const file of files) {
+    try {
+      let src = '';
+      try {
+        src = await uploadRefFileToServer(file);
+      } catch {
+        const dataUrl = await fileToDataUrl(file);
+        if (!dataUrl.startsWith('data:image/')) throw new Error('Not an image');
+        src = dataUrl;
+      }
+      folder.images.push({ src, name: file.name });
+
+      // Append just this new thumb
+      if (imagesEl) {
+        const oldAdd = imagesEl.querySelector('.folder-add-btn');
+        if (oldAdd) oldAdd.remove();
+        const ii = folder.images.length - 1;
+        imagesEl.appendChild(buildThumbNode(fi, ii, folder.images[ii]));
+        imagesEl.appendChild(makeAddBtn(fi));
+      }
+      loaded++;
+    } catch (err) {
+      failed++;
+      logError(`Could not load image: ${file.name}`, { raw: err.message });
+    }
+  }
+
+  saveData();
+  rebuildFolderImages(fi); // ensure order badges + count are correct
+  renderRefStrip();
+  if (failed) showToast(`Added ${loaded}, ${failed} failed`, 'error');
+  else showToast(`Added ${loaded} image${loaded>1?'s':''}`, 'success');
+  if (onDone) onDone();
+}
+
+async function deleteImageFromFolder(fi, ii) {
+  const img = folders[fi].images[ii];
+  const src = getImageSrc(img);
+  const refIdx = refImages.findIndex(r => getRefSrc(r) === src);
+  if (refIdx >= 0) refImages.splice(refIdx, 1);
+  folders[fi].images.splice(ii, 1);
+  if (src.startsWith('/refs/')) {
+    const filename = src.split('/').pop();
+    try { await fetch(`${SERVER}/api/ref/${encodeURIComponent(filename)}`, { method: 'DELETE' }); } catch {}
+  }
+  saveData();
+  rebuildFolderImages(fi);
+  renderRefStrip();
+}
+
+function toggleRefImage(fi, ii) {
+  const img = folders[fi]?.images[ii];
+  if (!img) return;
+  const src = getImageSrc(img);
+  if (!src) return;
+  const idx = refImages.findIndex(r => getRefSrc(r) === src);
+  if (idx >= 0) {
+    refImages.splice(idx, 1);
+  } else {
+    if (refImages.length >= 10) {
+      showToast('Max 10 reference images can be sent to API', 'error');
+      return;
+    }
+    refImages.push({ src, name: img.name });
+  }
+  // Patch only this folder's thumbs in-place — folder stays open
+  patchThumb(fi, ii);
+  renderRefStrip();
+}
+
+function renderRefStrip() {
+  const strip = document.getElementById('refStrip');
+  const inner = document.getElementById('refImagesStrip');
+  const summary = document.getElementById('refSummary');
+
+  // Clear previous content safely
+  while (inner.firstChild) inner.removeChild(inner.firstChild);
+
+  if (!refImages.length) {
+    strip.style.display = 'none';
+    summary.innerHTML = 'No reference images selected.<br>Click a folder image to add as reference.';
+    return;
+  }
+
+  strip.style.display = 'block';
+
+  // Label
+  const label = document.createElement('span');
+  label.className = 'ref-label';
+  label.textContent = 'References:';
+  inner.appendChild(label);
+
+  // Thumbs
+  refImages.forEach((r, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'ref-thumb';
+
+    const img = document.createElement('img');
+    img.src = getRefSrc(r);
+    img.alt = r.name || '';
+    wrap.appendChild(img);
+
+    const btn = document.createElement('button');
+    btn.className = 'ref-thumb-remove';
+    btn.textContent = '✕';
+    btn.title = 'Remove';
+    btn.onclick = () => removeRef(i);
+    wrap.appendChild(btn);
+
+    inner.appendChild(wrap);
+  });
+
+  summary.innerHTML = `${refImages.length} reference image${refImages.length > 1 ? 's' : ''} selected.<br>
+    <span style="color:var(--glow);cursor:pointer;font-size:10px;" onclick="clearRefs()">Clear all</span>`;
+}
+
+function removeRef(i) {
+  refImages.splice(i, 1);
+  renderFolders();
+  renderRefStrip();
+}
+function clearRefs() {
+  refImages = [];
+  renderFolders();
+  renderRefStrip();
+}
+
+// ============================================================
+// MODE SWITCHING (Image / Video)
+// ============================================================
+let currentMode = 'image'; // 'image' | 'video'
+
+function switchMode(mode, btn) {
+  currentMode = mode;
+  document.querySelectorAll('#modeImageBtn,#modeVideoBtn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  const imgEls = document.querySelectorAll('.image-settings');
+  const vidEls = document.querySelectorAll('.video-settings');
+
+  if (mode === 'image') {
+    imgEls.forEach(e => { e.style.display = ''; e.classList.remove('hide'); });
+    vidEls.forEach(e => { e.style.display = 'none'; });
+    document.getElementById('promptTextarea').placeholder = 'Describe your image…';
+    document.getElementById('generateBtnIcon').textContent = '✦';
+    document.getElementById('emptyState').querySelector('.empty-title').textContent = 'Ready to generate';
+    document.getElementById('emptyState').querySelector('.empty-sub').textContent = 'Enter a prompt below, choose your Seedream model, and click Generate.';
+  } else {
+    imgEls.forEach(e => { e.style.display = 'none'; });
+    vidEls.forEach(e => { e.style.display = 'block'; });
+    document.getElementById('promptTextarea').placeholder = 'Describe your video… (camera movement, scene, style)';
+    document.getElementById('generateBtnIcon').textContent = '▶';
+    document.getElementById('emptyState').querySelector('.empty-title').textContent = 'Ready to generate video';
+    document.getElementById('emptyState').querySelector('.empty-sub').textContent = 'Enter a prompt, choose a Seedance model, and click Generate. For I2V models select a reference image first.';
+  }
+}
+
+// ============================================================
+// GENERATION
+// ============================================================
+// ============================================================
+// QUEUE SYSTEM
+// ============================================================
+let generating = false;
+let generationQueue = []; // { id, mode, prompt, settings, status, label }
+let queueRunning = false;
+const MAX_CONCURRENT_GENERATIONS = 3;
+
+function snapshotSettings(mode) {
+  if (mode === 'image') {
+    return {
+      model: document.getElementById('modelSelect').value,
+      size: document.getElementById('sizeSelect').value,
+      count: parseInt(document.getElementById('countSelect').value),
+      syncMode: document.getElementById('syncToggle').classList.contains('on'),
+      guidance: parseFloat(document.getElementById('guidanceVal').textContent),
+      pngOutput: document.getElementById('pngToggle').classList.contains('on'),
+      refImages: refImages.map(r => ({ src: getRefSrc(r), dataUrl: r.dataUrl, name: r.name })),
+    };
+  } else {
+    return {
+      model: document.getElementById('videoModelSelect').value,
+      aspectRatio: document.getElementById('aspectSelect').value,
+      duration: parseInt(document.getElementById('durationSelect').value),
+      generateAudio: document.getElementById('audioToggle').classList.contains('on'),
+      cameraFixed: document.getElementById('cameraFixedToggle').classList.contains('on'),
+      refImages: refImages.map(r => ({ src: getRefSrc(r), dataUrl: r.dataUrl, name: r.name })),
+    };
+  }
+}
+
+function renderQueue() {
+  const section = document.getElementById('queueSection');
+  const list = document.getElementById('queueList');
+  const badge = document.getElementById('queueBadge');
+
+  if (!generationQueue.length) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+
+  const pending = generationQueue.filter(j => j.status === 'pending').length;
+  badge.textContent = generationQueue.length;
+
+  list.innerHTML = '';
+  generationQueue.forEach(job => {
+    const item = document.createElement('div');
+    item.className = `queue-item ${job.status}`;
+
+    let icon;
+    if (job.status === 'running') icon = '<div class="queue-spinner"></div>';
+    else if (job.status === 'done') icon = '<span class="queue-status-icon">✓</span>';
+    else if (job.status === 'error') icon = '<span class="queue-status-icon">✕</span>';
+    else icon = '<span class="queue-status-icon" style="color:var(--muted)">◷</span>';
+
+    item.innerHTML = `
+      ${icon}
+      <div class="queue-item-info">
+        <div class="queue-item-model">${escHtml(job.label)}</div>
+        <div class="queue-item-prompt">${escHtml(job.prompt.slice(0, 60))}</div>
+      </div>
+      ${job.status === 'pending' ? `<button class="queue-item-remove" onclick="removeQueueItem('${job.id}')" title="Remove">✕</button>` : ''}
+    `;
+    list.appendChild(item);
+  });
+
+  // Auto-scroll to bottom
+  list.scrollTop = list.scrollHeight;
+}
+
+function removeQueueItem(id) {
+  generationQueue = generationQueue.filter(j => j.id !== id);
+  renderQueue();
+}
+
+function clearQueue() {
+  generationQueue = generationQueue.filter(j => j.status !== 'pending');
+  renderQueue();
+}
+
+async function generate() {
+  if (!apiKey) { showToast('Please enter your Atlas Cloud API key', 'error'); return; }
+  const prompt = document.getElementById('promptTextarea').value.trim();
+  if (!prompt) { showToast('Please enter a prompt', 'error'); return; }
+
+  const mode = currentMode;
+  const settings = snapshotSettings(mode);
+
+  // Validate I2V before queuing
+  if (mode === 'video') {
+    const isI2V = settings.model.includes('i2v') || settings.model.includes('image-to-video');
+    if (isI2V && !settings.refImages.length) {
+      showToast('I2V model — please select a reference image first', 'error');
+      return;
+    }
+  }
+
+  const modelShort = settings.model.split('/').pop();
+  const job = {
+    id: `q-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    mode, prompt, settings,
+    label: `${modelShort} · ${mode === 'image' ? settings.count + ' img' : settings.duration + 's video'}`,
+    status: 'pending',
+  };
+
+  generationQueue.push(job);
+  renderQueue();
+  showToast(`Added to queue (${generationQueue.filter(j=>j.status==='pending').length} pending)`, 'success');
+
+  if (!queueRunning) processQueue();
+}
+
+async function processQueue() {
+  if (queueRunning) return;
+  queueRunning = true;
+
+  const workerCount = Math.max(1, MAX_CONCURRENT_GENERATIONS);
+  const workers = Array.from({ length: workerCount }, () => queueWorker());
+  await Promise.all(workers);
+
+  queueRunning = false;
+  document.getElementById('generateBtnText').textContent = 'Generate';
+}
+
+function updateQueueButtonLabel() {
+  const pending = generationQueue.filter(j => j.status === 'pending').length;
+  const running = generationQueue.filter(j => j.status === 'running').length;
+  const label = running > 0
+    ? `Running ${running}/${MAX_CONCURRENT_GENERATIONS} · ${pending} queued`
+    : (pending > 0 ? `Queue: ${pending}` : 'Generate');
+  document.getElementById('generateBtnText').textContent = label;
+}
+
+function claimNextPendingJob() {
+  const job = generationQueue.find(j => j.status === 'pending');
+  if (!job) return null;
+  job.status = 'running';
+  return job;
+}
+
+async function queueWorker() {
+  while (true) {
+    const job = claimNextPendingJob();
+    if (!job) return;
+
+    updateQueueButtonLabel();
+    renderQueue();
+
+    try {
+      if (job.mode === 'image') await generateImage(job.prompt, job.settings);
+      else await generateVideo(job.prompt, job.settings);
+      job.status = 'done';
+    } catch (err) {
+      job.status = 'error';
+    } finally {
+      updateQueueButtonLabel();
+      renderQueue();
+      // Remove done/error items after 3s to keep list tidy
+      setTimeout(() => {
+        generationQueue = generationQueue.filter(j => j.status === 'pending' || j.status === 'running');
+        renderQueue();
+        updateQueueButtonLabel();
+      }, 3000);
+    }
+  }
+}
+
+async function generateImage(prompt, settings) {
+  const { model, size, count, syncMode, guidance, refImages: rawRefs } = settings;
+  const jobRefs = await prepareJobRefs(rawRefs);
+
+  const grid = document.getElementById('outputGrid');
+  const empty = document.getElementById('emptyState');
+  empty.style.display = 'none';
+  grid.style.display = 'grid';
+
+  const skeletonNodes = [];
+  for (let i = 0; i < count; i++) {
+    const sk = document.createElement('div');
+    sk.className = 'skeleton-card';
+    sk.innerHTML = `
+      <div class="skeleton-img"><div class="skeleton-spinner"></div></div>
+      <div style="padding:10px 12px;font-size:10px;color:var(--muted);font-family:var(--mono)">Generating image…</div>
+    `;
+    grid.insertBefore(sk, grid.firstChild);
+    skeletonNodes.push(sk);
+  }
+
+  try {
+    const body = { model, prompt, size, num_images: count, enable_sync_mode: syncMode, guidance_scale: guidance };
+    if (jobRefs.length && model.includes('edit')) {
+      body.image = jobRefs[0].dataUrl;
+      if (jobRefs.length > 1) body.images = jobRefs.slice(0, 10).map(r => r.dataUrl);
+    }
+
+    const resp = await fetch('https://api.atlascloud.ai/api/v1/model/generateImage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+    });
+    const result = await resp.json();
+    if (!resp.ok) { const e = new Error(result.message || result.error || `HTTP ${resp.status}`); e.raw = JSON.stringify(result); throw e; }
+
+    const predictionId = result.data?.id;
+    if (!predictionId) throw new Error('No prediction ID returned');
+    const outputs = await pollPrediction(predictionId);
+
+    skeletonNodes.forEach(s => s.remove());
+
+    const timestamp = new Date().toLocaleTimeString();
+    const ts = Date.now();
+    let savedCount = 0;
+
+    // Save all outputs to server first, get local URLs
+    const localOutputs = await Promise.all(outputs.map(async (u, i) => {
+      const fname = `img-${ts}-${i}-${model.replace(/[\/:]/g,'-')}.jpg`;
+      return await saveOutputToServer(u, fname);
+    }));
+
+    for (const localUrl of localOutputs) {
+      const card = document.createElement('div');
+      card.className = 'output-card';
+      card.innerHTML = `
+        <img src="${localUrl}" alt="Generated" loading="lazy" onclick="openLightbox('${localUrl}')">
+        <div class="output-card-info">
+          <span>${model.split('/').pop()} · ${timestamp} <span class="mode-badge image">IMG</span></span>
+          <div style="display:flex;gap:6px">
+            <button class="output-card-dl" onclick="downloadImage('${localUrl}')" title="Download">⬇</button>
+            <button class="output-card-del" onclick="deleteOutput('${localUrl}', this)" title="Delete">✕</button>
+          </div>
+        </div>`;
+      grid.insertBefore(card, grid.firstChild);
+      if (autosaveEnabled && saveDirHandle) {
+        const fname = `seedream-${model.replace(/\//g,'-')}-${ts}.jpg`;
+        if (await saveImageToFolder(localUrl, fname)) savedCount++;
+      }
+    }
+
+    const histItem = {
+      id: ts,
+      type: 'image',
+      model: model.split('/').pop(),
+      prompt: prompt.slice(0,80),
+      thumb: localOutputs[0],
+      time: timestamp,
+      outputs: localOutputs,
+      predictionId,
+    };
+    history.unshift(histItem);
+    if (history.length > 50) history.pop();
+    saveData(); renderHistory();
+    const saveMsg = savedCount > 0 ? ` · ${savedCount} auto-saved` : '';
+    showToast(`${localOutputs.length} image${localOutputs.length>1?'s':''} generated!${saveMsg}`, 'success');
+
+  } catch (err) {
+    skeletonNodes.forEach(s => s.remove());
+    if (!grid.children.length) { grid.style.display = 'none'; document.getElementById('emptyState').style.display = 'flex'; }
+    showToast('Error: ' + err.message, 'error');
+    logError(err.message, { model, prompt, raw: err.raw || '' });
+    throw err;
+  }
+}
+
+async function generateVideo(prompt, settings) {
+  const { model, aspectRatio, duration, generateAudio, cameraFixed, refImages: rawRefs } = settings;
+  const jobRefs = await prepareJobRefs(rawRefs);
+  const isI2V = model.includes('i2v') || model.includes('image-to-video');
+
+  const grid = document.getElementById('outputGrid');
+  const empty = document.getElementById('emptyState');
+  empty.style.display = 'none';
+  grid.style.display = 'grid';
+
+  const skeletonNode = document.createElement('div');
+  skeletonNode.className = 'skeleton-card';
+  skeletonNode.style.gridColumn = '1/-1';
+  skeletonNode.innerHTML = `
+    <div class="skeleton-img" style="aspect-ratio:16/9"><div class="skeleton-spinner"></div></div>
+    <div style="padding:10px 12px;font-size:10px;color:var(--muted);font-family:var(--mono)">Generating video — this may take 1–3 minutes…</div>`;
+  grid.insertBefore(skeletonNode, grid.firstChild);
+
+  try {
+    const body = { model, prompt, aspect_ratio: aspectRatio, duration, generate_audio: generateAudio, camera_fixed: cameraFixed };
+    if (isI2V && jobRefs.length) body.image = jobRefs[0].dataUrl;
+
+    const resp = await fetch('https://api.atlascloud.ai/api/v1/model/generateVideo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+    });
+    const result = await resp.json();
+    if (!resp.ok) { const e = new Error(result.message || result.error || `HTTP ${resp.status}`); e.raw = JSON.stringify(result); throw e; }
+
+    const predictionId = result.data?.id;
+    if (!predictionId) throw new Error('No prediction ID returned');
+    const outputs = await pollPrediction(predictionId, 240);
+
+    if (skeletonNode) skeletonNode.remove();
+
+    const timestamp = new Date().toLocaleTimeString();
+    const ts = Date.now();
+    let savedCount = 0;
+
+    // Save videos to server
+    const localOutputs = await Promise.all(outputs.map(async (u, i) => {
+      const fname = `vid-${ts}-${i}-${model.replace(/[\/:]/g,'-')}.mp4`;
+      return await saveOutputToServer(u, fname);
+    }));
+
+    for (const localUrl of localOutputs) {
+      const card = document.createElement('div');
+      card.className = 'output-card video-card';
+      card.innerHTML = `
+        <video src="${localUrl}" controls playsinline style="width:100%;aspect-ratio:16/9;background:#000;display:block"></video>
+        <div class="output-card-info">
+          <span>${model.split('/').pop()} · ${duration}s · ${timestamp} <span class="mode-badge video">VID</span></span>
+          <div style="display:flex;gap:6px">
+            <button class="output-card-dl" onclick="downloadVideo('${localUrl}')" title="Download">⬇</button>
+            <button class="output-card-del" onclick="deleteOutput('${localUrl}', this)" title="Delete">✕</button>
+          </div>
+        </div>`;
+      grid.insertBefore(card, grid.firstChild);
+      if (autosaveEnabled && saveDirHandle) {
+        const fname = `seedance-${model.replace(/\//g,'-')}-${ts}.mp4`;
+        if (await saveImageToFolder(localUrl, fname)) savedCount++;
+      }
+    }
+
+    const thumbUrl = isI2V && jobRefs.length ? (jobRefs[0].src || jobRefs[0].dataUrl) : (localOutputs[0] || '');
+    const histItem = {
+      id: ts,
+      type: 'video',
+      model: model.split('/').pop(),
+      prompt: prompt.slice(0,80),
+      thumb: thumbUrl,
+      videoUrl: localOutputs[0],
+      time: timestamp,
+      outputs: localOutputs,
+      predictionId,
+    };
+    history.unshift(histItem);
+    if (history.length > 50) history.pop();
+    saveData(); renderHistory();
+    const saveMsg = savedCount > 0 ? ` · ${savedCount} auto-saved` : '';
+    showToast(`Video generated!${saveMsg}`, 'success');
+
+  } catch (err) {
+    if (skeletonNode) skeletonNode.remove();
+    if (!grid.children.length) { grid.style.display = 'none'; document.getElementById('emptyState').style.display = 'flex'; }
+    showToast('Error: ' + err.message, 'error');
+    logError(err.message, { model, prompt, raw: err.raw || '' });
+    throw err;
+  }
+}
+
+async function pollPrediction(id, maxWaitSecs = 240) {
+  const url = `https://api.atlascloud.ai/api/v1/model/prediction/${id}`;
+  const maxIterations = Math.ceil(maxWaitSecs / 2);
+  for (let i = 0; i < maxIterations; i++) {
+    await sleep(2000);
+    const resp = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    });
+    const result = await resp.json();
+    const data = result.data;
+    if (data.status === 'completed') {
+      return data.outputs || [];
+    } else if (data.status === 'failed') {
+      throw new Error(data.error || 'Generation failed');
+    }
+  }
+  throw new Error('Generation timed out');
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============================================================
+// SAVE FOLDER (File System Access API)
+// ============================================================
+let saveDirHandle = null;
+let autosaveEnabled = false;
+const fsSupported = ('showDirectoryPicker' in window);
+
+function initSaveFolder() {
+  if (!fsSupported) {
+    document.getElementById('fsWarning').classList.add('show');
+    document.getElementById('saveFolderBtn').disabled = true;
+    document.getElementById('saveFolderBtn').title = 'Not supported in this browser';
+    document.getElementById('saveFolderBtn').style.opacity = '0.4';
+  }
+  // Restore autosave preference (handle is not persisted — user must re-pick on each session)
+  autosaveEnabled = false; // loaded in bootFromServer
+}
+
+function toggleAutosave() {
+  autosaveEnabled = !autosaveEnabled;
+  document.getElementById('autosaveToggle').classList.toggle('on', autosaveEnabled);
+  serverSet('atlasAutosave', autosaveEnabled ? '1' : '0');
+  if (autosaveEnabled && !saveDirHandle && fsSupported) {
+    pickSaveFolder();
+  }
+}
+
+async function pickSaveFolder() {
+  if (!fsSupported) {
+    showToast('File System Access API not supported. Use Chrome/Edge.', 'error');
+    return;
+  }
+  try {
+    saveDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    updateSaveFolderUI();
+    showToast('Save folder set: ' + saveDirHandle.name, 'success');
+  } catch (e) {
+    if (e.name !== 'AbortError') showToast('Could not open folder: ' + e.message, 'error');
+  }
+}
+
+function clearSaveFolder() {
+  saveDirHandle = null;
+  updateSaveFolderUI();
+  showToast('Save folder cleared', 'success');
+}
+
+function updateSaveFolderUI() {
+  const bar = document.getElementById('saveFolderBar');
+  const nameEl = document.getElementById('saveFolderName');
+  const subEl = document.getElementById('saveFolderSub');
+  const btn = document.getElementById('saveFolderBtn');
+  const actions = document.getElementById('saveFolderActions');
+
+  if (saveDirHandle) {
+    bar.classList.add('active');
+    nameEl.textContent = saveDirHandle.name;
+    subEl.textContent = autosaveEnabled ? '✓ Auto-saving enabled' : 'Folder ready — auto-save is off';
+    subEl.style.color = autosaveEnabled ? 'var(--success)' : 'var(--muted)';
+    btn.textContent = 'Change';
+    actions.style.display = 'flex';
+  } else {
+    bar.classList.remove('active');
+    nameEl.textContent = 'No folder selected';
+    subEl.textContent = fsSupported ? 'Click Choose to pick a folder' : 'Use Chrome/Edge for this feature';
+    subEl.style.color = 'var(--muted)';
+    btn.textContent = 'Choose';
+    actions.style.display = 'none';
+  }
+}
+
+async function saveImageToFolder(url, filename) {
+  if (!saveDirHandle) return false;
+  try {
+    // Fetch the image as blob
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    const ext = blob.type.includes('png') ? 'png' : 'jpg';
+    const fname = filename || `seedream-${Date.now()}.${ext}`;
+    const fileHandle = await saveDirHandle.getFileHandle(fname, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return true;
+  } catch (e) {
+    console.warn('Auto-save failed:', e);
+    // If permission expired, prompt again
+    if (e.name === 'NotAllowedError') {
+      showToast('Folder permission lost. Please re-select your save folder.', 'error');
+      saveDirHandle = null;
+      updateSaveFolderUI();
+    }
+    return false;
+  }
+}
+
+
+function renderHistory() {
+  const el = document.getElementById('historyList');
+  if (!history.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:16px">No history yet.</div>';
+    return;
+  }
+  el.innerHTML = history.map(h => {
+    const isVideo = h.type === 'video';
+    const thumbHtml = isVideo
+      ? `<div class="history-thumb" style="display:flex;align-items:center;justify-content:center;background:#0a1a10;font-size:18px;">▶</div>`
+      : `<div class="history-thumb"><img src="${h.thumb}" alt="" onerror="this.style.display='none'"></div>`;
+    const clickAction = isVideo && h.videoUrl
+      ? `onclick="openVideoLightbox('${h.videoUrl}')"`
+      : `onclick="openLightbox('${h.outputs?.[0] || h.thumb}')"`;
+    return `
+    <div class="history-item" ${clickAction}>
+      ${thumbHtml}
+      <div class="history-info">
+        <div class="history-model">${escHtml(h.model)} <span class="mode-badge ${isVideo ? 'video' : 'image'}" style="font-size:9px;padding:1px 5px">${isVideo ? 'VID' : 'IMG'}</span></div>
+        <div class="history-prompt">${escHtml(h.prompt)}</div>
+        <div class="history-time">${h.time}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ============================================================
+// TABS
+// ============================================================
+function switchTab(tab, el) {
+  currentTab = tab;
+  document.querySelectorAll('#viewTabs .htab').forEach(b => b.classList.remove('active'));
+  if (el) el.classList.add('active');
+
+  const grid = document.getElementById('outputGrid');
+  const empty = document.getElementById('emptyState');
+  const promptBar = document.getElementById('promptBar');
+  const refStrip = document.getElementById('refStrip');
+
+  if (tab === 'history') {
+    promptBar.style.display = 'none';
+    refStrip.style.display = 'none';
+    renderCenterHistory();
+    return;
+  }
+
+  promptBar.style.display = '';
+  if (refImages.length) refStrip.style.display = 'block';
+  else refStrip.style.display = 'none';
+  empty.querySelector('.empty-title').textContent = currentMode === 'video' ? 'Ready to generate video' : 'Ready to generate';
+  empty.querySelector('.empty-sub').textContent = currentMode === 'video'
+    ? 'Enter a prompt, choose a Seedance model, and click Generate. For I2V models select a reference image first.'
+    : 'Enter a prompt below, choose your Seedream model, and click Generate.';
+
+  if (!grid.children.length) {
+    restoreOutputGrid();
+  }
+  if (grid.children.length) {
+    grid.style.display = 'grid';
+    empty.style.display = 'none';
+  } else {
+    grid.style.display = 'none';
+    empty.style.display = 'flex';
+  }
+}
+
+function renderCenterHistory() {
+  const grid = document.getElementById('outputGrid');
+  const empty = document.getElementById('emptyState');
+
+  if (!history.length) {
+    grid.style.display = 'none';
+    empty.style.display = 'flex';
+    empty.querySelector('.empty-title').textContent = 'No history yet';
+    empty.querySelector('.empty-sub').textContent = 'Generate an image or video to populate your history.';
+    return;
+  }
+
+  empty.style.display = 'none';
+  grid.style.display = 'grid';
+  grid.innerHTML = '';
+
+  for (const h of history) {
+    const outputs = Array.isArray(h.outputs) && h.outputs.length ? h.outputs : (h.thumb ? [h.thumb] : []);
+    for (const outputUrl of outputs) {
+      const card = document.createElement('div');
+      if (h.type === 'video') {
+        card.className = 'output-card video-card';
+        card.innerHTML = `
+          <video src="${outputUrl}" controls playsinline style="width:100%;aspect-ratio:16/9;background:#000;display:block"></video>
+          <div class="output-card-info">
+            <span>${escHtml(h.model || 'video')} <span class="mode-badge video">VID</span></span>
+            <div style="display:flex;gap:6px">
+              <button class="output-card-dl" onclick="downloadVideo('${outputUrl}')" title="Download">⬇</button>
+              <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
+            </div>
+          </div>`;
+      } else {
+        card.className = 'output-card';
+        card.innerHTML = `
+          <img src="${outputUrl}" alt="Generated" loading="lazy" onclick="openLightbox('${outputUrl}')">
+          <div class="output-card-info">
+            <span>${escHtml(h.model || 'image')} <span class="mode-badge image">IMG</span></span>
+            <div style="display:flex;gap:6px">
+              <button class="output-card-dl" onclick="downloadImage('${outputUrl}')" title="Download">⬇</button>
+              <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
+            </div>
+          </div>`;
+      }
+      grid.appendChild(card);
+    }
+  }
+}
+
+// ============================================================
+// LIGHTBOX
+// ============================================================
+function openLightbox(src) {
+  document.getElementById('lightboxImg').src = src;
+  document.getElementById('lightboxImg').style.display = 'block';
+  document.getElementById('lightboxVideo').style.display = 'none';
+  document.getElementById('lightbox').classList.add('show');
+}
+function openVideoLightbox(src) {
+  const vid = document.getElementById('lightboxVideo');
+  vid.src = src; vid.style.display = 'block';
+  document.getElementById('lightboxImg').style.display = 'none';
+  document.getElementById('lightbox').classList.add('show');
+  vid.play();
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('show');
+  document.getElementById('lightboxVideo').pause();
+  document.getElementById('lightboxVideo').src = '';
+}
+
+// ============================================================
+// DOWNLOAD
+// ============================================================
+function downloadImage(url) {
+  const a = document.createElement('a');
+  a.href = url; a.download = `seedream-${Date.now()}.jpg`;
+  a.target = '_blank'; a.click();
+}
+
+function downloadVideo(url) {
+  const a = document.createElement('a');
+  a.href = url; a.download = `seedance-${Date.now()}.mp4`;
+  a.target = '_blank'; a.click();
+}
+
+function basenameFromOutputUrl(outputUrl) {
+  const clean = String(outputUrl || '').split('?')[0];
+  if (!clean.startsWith('/outputs/')) return '';
+  const parts = clean.split('/');
+  return parts[parts.length - 1] || '';
+}
+
+function removeOutputFromLocalHistory(outputUrl) {
+  const next = [];
+  for (const item of history) {
+    const outs = Array.isArray(item.outputs) ? item.outputs.filter(u => u !== outputUrl) : [];
+    if (!outs.length && (item.thumb === outputUrl || item.videoUrl === outputUrl || (item.outputs || []).length)) {
+      continue;
+    }
+    const copy = { ...item, outputs: outs };
+    if (copy.thumb === outputUrl) copy.thumb = outs[0] || '';
+    if (copy.videoUrl === outputUrl) copy.videoUrl = outs.find(u => /\.(mp4|webm)$/i.test(u)) || '';
+    next.push(copy);
+  }
+  history = next;
+}
+
+async function deleteOutput(outputUrl, btnEl) {
+  const filename = basenameFromOutputUrl(outputUrl);
+  if (!filename) {
+    showToast('Can only delete files saved on this server', 'error');
+    return;
+  }
+  if (!confirm('Delete this output from server and history?')) return;
+
+  try {
+    if (btnEl) btnEl.disabled = true;
+    const r = await fetch(`${SERVER}/api/output/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+
+    removeOutputFromLocalHistory(outputUrl);
+    renderHistory();
+    if (currentTab === 'history') renderCenterHistory();
+    else {
+      const card = btnEl?.closest('.output-card');
+      if (card) card.remove();
+      const grid = document.getElementById('outputGrid');
+      if (!grid.children.length) {
+        grid.style.display = 'none';
+        document.getElementById('emptyState').style.display = 'flex';
+      }
+    }
+
+    const atlasMsg = d.atlasAttempted
+      ? ` Atlas: ${d.atlasDeleted}/${d.atlasAttempted} deleted.`
+      : '';
+    showToast(`Deleted output.${atlasMsg}`, d.atlasAttempted && d.atlasDeleted === 0 ? 'error' : 'success');
+    if (d.atlasAttempted && d.atlasDeleted === 0 && Array.isArray(d.atlasTried)) {
+      console.warn('Atlas delete attempts', d.atlasTried);
+    }
+    syncFromServer();
+  } catch (e) {
+    showToast('Delete failed: ' + e.message, 'error');
+  } finally {
+    if (btnEl) btnEl.disabled = false;
+  }
+}
+
+// ============================================================
+// MODAL UTILS
+// ============================================================
+function closeModal(id) {
+  document.getElementById(id).classList.remove('show');
+}
+
+// Close modals on overlay click
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => {
+    if (e.target === el) el.classList.remove('show');
+  });
+});
+
+// ============================================================
+// TOAST
+// ============================================================
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent = msg;
+  document.getElementById('toastIcon').textContent = type === 'success' ? '✓' : '✕';
+  t.className = `toast show ${type}`;
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ============================================================
+// PERSIST
+// ============================================================
+function saveData() {
+  const lightHistory = history.slice(0, 20).map(h => ({
+    ...h,
+    thumb: h.thumb?.startsWith('data:') ? '' : h.thumb,
+    outputs: (h.outputs || []).filter(u => !u.startsWith('data:')),
+  }));
+  // Fire-and-forget bulk save
+  serverSetBulk([
+    { key: 'atlasPrompts', value: JSON.stringify(prompts) },
+    { key: 'atlasFolders', value: JSON.stringify(folders) },
+    { key: 'atlasHistory', value: JSON.stringify(lightHistory) },
+  ]);
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ============================================================
+// DATA MANAGER — Export / Import / Clear
+// ============================================================
+
+function openDataManager() {
+  // Refresh stats
+  const statsEl = document.getElementById('dmStats');
+  const folderImgCount = folders.reduce((a, f) => a + f.images.length, 0);
+  const storageKb = Math.round(JSON.stringify({prompts, folders, history}).length / 1024);
+  statsEl.innerHTML = `
+    <div class="dm-stat"><div class="dm-stat-val">${prompts.length}</div><div class="dm-stat-label">Saved Prompts</div></div>
+    <div class="dm-stat"><div class="dm-stat-val">${folders.length}</div><div class="dm-stat-label">Folders</div></div>
+    <div class="dm-stat"><div class="dm-stat-val">${folderImgCount}</div><div class="dm-stat-label">Reference Images</div></div>
+    <div class="dm-stat"><div class="dm-stat-val">${storageKb} KB</div><div class="dm-stat-label">Estimated Export Size</div></div>
+  `;
+  document.getElementById('dataManagerModal').classList.add('show');
+}
+
+function buildExportPayload(what = 'all') {
+  const payload = {
+    _version: 1,
+    _app: 'SeedreamStudio',
+    _exported: new Date().toISOString(),
+  };
+  if (what === 'all' || what === 'prompts') payload.prompts = prompts;
+  if (what === 'all' || what === 'folders') payload.folders = folders;
+  if (what === 'all') {
+    payload.apiKey = apiKey;
+    payload.history = history;
+  }
+  return payload;
+}
+
+function downloadJson(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportData() {
+  downloadJson(buildExportPayload('all'), `seedream-studio-backup-${dateSlug()}.json`);
+  showToast('Full backup exported!', 'success');
+}
+function exportPromptsOnly() {
+  downloadJson(buildExportPayload('prompts'), `seedream-prompts-${dateSlug()}.json`);
+  showToast('Prompts exported!', 'success');
+}
+function exportFoldersOnly() {
+  downloadJson(buildExportPayload('folders'), `seedream-folders-${dateSlug()}.json`);
+  showToast('Folders exported!', 'success');
+}
+
+function dateSlug() {
+  return new Date().toISOString().slice(0,10);
+}
+
+// Store pending import data + mode
+let _pendingImport = null;
+let _importMode = 'replace';
+
+function triggerImport(mode) {
+  _importMode = mode;
+  // If file already loaded, apply it
+  if (_pendingImport) { applyImport(_pendingImport, mode); return; }
+  // Otherwise prompt for file
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.json';
+  inp.onchange = () => handleImportFile(inp);
+  inp.click();
+}
+
+function handleImportFile(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data._app || data._app !== 'SeedreamStudio') {
+        // Still try to import if it has recognisable keys
+        if (!data.prompts && !data.folders) {
+          showToast('Invalid file — not a Seedream Studio export.', 'error'); return;
+        }
+      }
+      _pendingImport = data;
+      // Show drop zone feedback
+      const drop = document.getElementById('importDrop');
+      drop.style.borderColor = 'var(--success)';
+      drop.style.color = 'var(--success)';
+      drop.querySelector('.drop-icon').textContent = '✓';
+      drop.childNodes[2].textContent = `Loaded: ${file.name}`;
+      showToast(`File loaded — choose Replace or Merge`, 'success');
+    } catch(err) {
+      showToast('Could not parse file: ' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file);
+}
+
+function applyImport(data, mode) {
+  if (mode === 'replace') {
+    if (!confirm('Replace ALL local data with imported file? This cannot be undone.')) return;
+    if (data.prompts) prompts = data.prompts;
+    if (data.folders) folders = data.folders;
+    if (data.history) history = data.history;
+    if (data.apiKey) {
+      apiKey = data.apiKey;
+      document.getElementById('apiKeyInput').value = apiKey;
+      document.getElementById('statusDot').classList.toggle('connected', apiKey.length > 10);
+    }
+    showToast('Data replaced from import!', 'success');
+  } else {
+    // Merge: add prompts/folders not already present (by name)
+    let addedPrompts = 0, addedFolders = 0;
+    if (data.prompts) {
+      for (const p of data.prompts) {
+        if (!prompts.find(x => x.name === p.name && x.text === p.text)) {
+          prompts.push(p); addedPrompts++;
+        }
+      }
+    }
+    if (data.folders) {
+      for (const f of data.folders) {
+        const existing = folders.find(x => x.name === f.name);
+        if (!existing) {
+          folders.push(f); addedFolders++;
+        } else {
+          // Merge images into existing folder (up to 10)
+          for (const img of (f.images || [])) {
+            if (existing.images.length < 10 && !existing.images.find(i => i.name === img.name)) {
+              existing.images.push(img);
+            }
+          }
+        }
+      }
+    }
+    showToast(`Merged: +${addedPrompts} prompts, +${addedFolders} folders`, 'success');
+  }
+
+  saveData();
+  renderPrompts();
+  renderFolders();
+  renderHistory();
+  _pendingImport = null;
+  closeModal('dataManagerModal');
+}
+
+async function clearAllData() {
+  if (!confirm('Delete ALL data — prompts, folders, history, API key? This cannot be undone.')) return;
+  prompts = []; folders = []; history = []; apiKey = '';
+  await Promise.all([
+    serverDel('atlasApiKey'), serverDel('atlasPrompts'),
+    serverDel('atlasFolders'), serverDel('atlasHistory'),
+  ]);
+  document.getElementById('apiKeyInput').value = '';
+  document.getElementById('statusDot').classList.remove('connected');
+  renderPrompts(); renderFolders(); renderHistory(); renderRefStrip();
+  closeModal('dataManagerModal');
+  showToast('All data cleared from server.', 'success');
+}
+
+// Drag & drop on import zone
+document.addEventListener('DOMContentLoaded', () => {
+  const drop = document.getElementById('importDrop');
+  if (!drop) return;
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('dragover'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) { const fakeInput = { files: [file] }; handleImportFile(fakeInput); }
+  });
+});
+
+
+
+// ============================================================
+// ERROR LOG
+// ============================================================
+let errorLog = [];
+
+function logError(message, context = {}) {
+  const entry = {
+    id: Date.now(),
+    time: new Date().toLocaleTimeString(),
+    date: new Date().toLocaleDateString(),
+    message: String(message),
+    model: context.model || '',
+    prompt: context.prompt ? context.prompt.slice(0, 120) : '',
+    raw: context.raw || '',
+  };
+  errorLog.unshift(entry);
+  if (errorLog.length > 100) errorLog.pop();
+  renderErrorLog();
+  updateErrorBadge();
+}
+
+function updateErrorBadge() {
+  const btn = document.getElementById('errorLogBtn');
+  const badge = document.getElementById('errorCountBadge');
+  badge.textContent = errorLog.length;
+  btn.classList.toggle('has-errors', errorLog.length > 0);
+}
+
+function renderErrorLog() {
+  const el = document.getElementById('errorLogList');
+  if (!errorLog.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:16px">No errors logged.</div>';
+    return;
+  }
+  el.innerHTML = errorLog.map(e => `
+    <div class="error-entry">
+      <div class="error-entry-time">${e.date} ${e.time}</div>
+      <div class="error-entry-msg">${escHtml(e.message)}</div>
+      ${e.model ? `<div class="error-entry-ctx">Model: ${escHtml(e.model)}</div>` : ''}
+      ${e.prompt ? `<div class="error-entry-ctx">Prompt: ${escHtml(e.prompt)}${e.prompt.length >= 120 ? '…' : ''}</div>` : ''}
+      ${e.raw ? `<div class="error-entry-ctx">Raw: ${escHtml(e.raw)}</div>` : ''}
+      <button class="error-copy-btn" onclick="copyError(${e.id})">📋 Copy</button>
+    </div>
+  `).join('');
+}
+
+function copyError(id) {
+  const e = errorLog.find(x => x.id === id);
+  if (!e) return;
+  const txt = `[${e.date} ${e.time}] ${e.message}${e.model ? '\nModel: ' + e.model : ''}${e.prompt ? '\nPrompt: ' + e.prompt : ''}${e.raw ? '\nRaw: ' + e.raw : ''}`;
+  navigator.clipboard.writeText(txt).then(() => showToast('Error copied to clipboard', 'success'));
+}
+
+function toggleErrorLog() {
+  document.getElementById('errorLogPanel').classList.toggle('show');
+}
+
+function clearErrorLog() {
+  errorLog = [];
+  renderErrorLog();
+  updateErrorBadge();
+  document.getElementById('errorLogPanel').classList.remove('show');
+}
+
+// Keyboard shortcut: Ctrl+Enter to generate
+document.getElementById('promptTextarea').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') generate();
+});
+</script>
+</body>
+</html>
