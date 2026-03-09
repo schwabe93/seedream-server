@@ -1,7 +1,5 @@
 node_modules/
-data/outputs/
-data/refs/
-data/*.tmp
+data/
 .env
 .DS_Store
 Thumbs.db
