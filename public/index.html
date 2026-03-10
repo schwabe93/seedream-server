@@ -822,6 +822,146 @@
     cursor: pointer; color: var(--text); font-size: 16px;
     display: flex; align-items: center; justify-content: center;
   }
+
+  @media (max-width: 900px) {
+    body {
+      display: flex;
+      flex-direction: column;
+      height: auto;
+      min-height: 100vh;
+      overflow-y: auto;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      flex-wrap: wrap;
+      padding: 10px 12px;
+      gap: 10px;
+    }
+
+    .spacer {
+      display: none;
+    }
+
+    .header-tabs {
+      margin-left: 0;
+      overflow-x: auto;
+      max-width: 100%;
+    }
+
+    .api-key-input {
+      width: 100%;
+      order: 10;
+    }
+
+    .left-panel,
+    .center-panel,
+    .right-panel {
+      grid-row: auto;
+      width: 100%;
+      overflow: visible;
+      border: none;
+    }
+
+    .center-panel {
+      order: 1;
+      min-height: 65vh;
+    }
+
+    .left-panel {
+      order: 2;
+      border-top: 1px solid var(--border);
+    }
+
+    .right-panel {
+      order: 3;
+      border-top: 1px solid var(--border);
+    }
+
+    .generate-area {
+      padding: 14px;
+      min-height: 44vh;
+    }
+
+    .output-grid {
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
+    }
+
+    .prompt-bar {
+      padding: 12px;
+    }
+
+    .prompt-input-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .generate-btn {
+      width: 100%;
+      justify-content: center;
+      height: 52px;
+    }
+
+    .prompt-options {
+      gap: 8px;
+    }
+
+    .select-styled,
+    .save-prompt-btn,
+    .data-manager-btn {
+      max-width: 100%;
+    }
+
+    .right-section,
+    .history-list {
+      padding-left: 12px;
+      padding-right: 12px;
+    }
+
+    .prompt-list,
+    .folder-list,
+    .history-list {
+      max-height: none;
+    }
+
+    .save-folder-bar {
+      flex-wrap: wrap;
+    }
+
+    .save-folder-btn {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .logo {
+      font-size: 13px;
+    }
+
+    .htab {
+      padding: 5px 10px;
+      font-size: 11px;
+    }
+
+    .generate-area {
+      padding: 10px;
+    }
+
+    .prompt-textarea {
+      min-height: 84px;
+    }
+
+    .output-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .dm-grid {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>
 </head>
 <body>
