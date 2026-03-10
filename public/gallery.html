@@ -158,6 +158,43 @@
       a.click();
     }
 
+    function getPromptText(entry) {
+      return String(entry?.promptFull || entry?.prompt || '').trim();
+    }
+
+    async function copyPrompt(text) {
+      const value = String(text || '').trim();
+      if (!value) {
+        alert('No prompt stored for this item.');
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(value);
+      } catch (e) {
+        alert('Clipboard copy failed.');
+      }
+    }
+
+    async function fetchHistoryMap() {
+      try {
+        const r = await fetch('/api/store/atlasHistory');
+        if (!r.ok) return new Map();
+        const d = await r.json();
+        let items = [];
+        try { items = JSON.parse(d.value); } catch { items = []; }
+        const map = new Map();
+        (Array.isArray(items) ? items : []).forEach(item => {
+          const prompt = getPromptText(item);
+          if (item.thumb) map.set(item.thumb, prompt);
+          if (item.videoUrl) map.set(item.videoUrl, prompt);
+          (Array.isArray(item.outputs) ? item.outputs : []).forEach(u => map.set(u, prompt));
+        });
+        return map;
+      } catch {
+        return new Map();
+      }
+    }
+
     async function loadGallery() {
       const meta = document.getElementById('meta');
       const grid = document.getElementById('grid');
@@ -167,7 +204,10 @@
       grid.innerHTML = '';
 
       try {
-        const r = await fetch('/api/outputs');
+        const [r, promptMap] = await Promise.all([
+          fetch('/api/outputs'),
+          fetchHistoryMap(),
+        ]);
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const data = await r.json();
         const files = Array.isArray(data.files) ? data.files : [];
@@ -182,6 +222,7 @@
           const name = f.name || '';
           const url = '/outputs/' + name;
           const isVideo = /\.(mp4|webm)$/i.test(name);
+          const prompt = promptMap.get(url) || '';
           const card = document.createElement('div');
           card.className = 'card';
 
@@ -191,6 +232,7 @@
               <div class="info">
                 <span class="name" title="${esc(name)}">${esc(name)}</span>
                 <div style="display:flex;gap:6px">
+                  <button class="btn" style="padding:4px 8px" onclick="copyPrompt(${JSON.stringify(prompt)})">Prompt</button>
                   <button class="btn" style="padding:4px 8px" onclick="download('${url}','${esc(name)}')">Save</button>
                   <button class="btn" style="padding:4px 8px;border-color:#ef444466;color:#ef4444" onclick="deleteOutput('${esc(name)}', this)">Delete</button>
                 </div>
@@ -201,6 +243,7 @@
               <div class="info">
                 <span class="name" title="${esc(name)}">${esc(name)}</span>
                 <div style="display:flex;gap:6px">
+                  <button class="btn" style="padding:4px 8px" onclick="copyPrompt(${JSON.stringify(prompt)})">Prompt</button>
                   <button class="btn" style="padding:4px 8px" onclick="download('${url}','${esc(name)}')">Save</button>
                   <button class="btn" style="padding:4px 8px;border-color:#ef444466;color:#ef4444" onclick="deleteOutput('${esc(name)}', this)">Delete</button>
                 </div>

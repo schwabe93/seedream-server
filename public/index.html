@@ -265,6 +265,12 @@
     transition: transform 0.15s;
   }
   .output-card-del:hover { transform: translateY(2px); }
+  .output-card-copy {
+    background: none; border: none; cursor: pointer;
+    color: var(--text); font-size: 13px; padding: 2px;
+    transition: transform 0.15s;
+  }
+  .output-card-copy:hover { transform: translateY(2px); }
 
   /* Skeleton loader */
   .skeleton-card {
@@ -445,6 +451,16 @@
     overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   }
   .history-time { font-size: 9px; color: var(--muted); font-family: var(--mono); margin-top: 3px; }
+  .history-copy-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px;
+    flex-shrink: 0;
+  }
+  .history-copy-btn:hover { color: var(--glow); }
 
   /* MODAL */
   .modal-overlay {
@@ -1242,6 +1258,43 @@ async function saveOutputToServer(url, filename) {
   } catch { return url; }
 }
 
+function getPromptText(entry) {
+  return String(entry?.promptFull || entry?.prompt || '').trim();
+}
+
+function findHistoryItemByOutput(outputUrl) {
+  return history.find(h => {
+    if (h.thumb === outputUrl || h.videoUrl === outputUrl) return true;
+    return Array.isArray(h.outputs) && h.outputs.includes(outputUrl);
+  }) || null;
+}
+
+async function copyTextToClipboard(text, successMsg = 'Copied to clipboard') {
+  const value = String(text || '').trim();
+  if (!value) {
+    showToast('No prompt available to copy', 'error');
+    return false;
+  }
+  try {
+    await navigator.clipboard.writeText(value);
+    showToast(successMsg, 'success');
+    return true;
+  } catch (e) {
+    showToast('Clipboard copy failed', 'error');
+    return false;
+  }
+}
+
+async function copyPromptForOutput(outputUrl) {
+  const item = findHistoryItemByOutput(outputUrl);
+  return copyTextToClipboard(getPromptText(item), 'Prompt copied to clipboard');
+}
+
+async function copyPromptByHistoryId(id) {
+  const item = history.find(h => String(h.id) === String(id));
+  return copyTextToClipboard(getPromptText(item), 'Prompt copied to clipboard');
+}
+
 async function fetchSavedOutputs() {
   try {
     const r = await fetch(`${SERVER}/api/outputs`);
@@ -1429,6 +1482,7 @@ function restoreOutputGrid() {
           <div class="output-card-info">
             <span>${escHtml(h.model)} · ${ts} <span class="mode-badge video">VID</span></span>
             <div style="display:flex;gap:6px">
+              <button class="output-card-copy" onclick="copyPromptForOutput('${outputUrl}')" title="Copy prompt">⧉</button>
               <button class="output-card-dl" onclick="downloadVideo('${outputUrl}')" title="Download">⬇</button>
               <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
             </div>
@@ -1440,6 +1494,7 @@ function restoreOutputGrid() {
           <div class="output-card-info">
             <span>${escHtml(h.model)} · ${ts} <span class="mode-badge image">IMG</span></span>
             <div style="display:flex;gap:6px">
+              <button class="output-card-copy" onclick="copyPromptForOutput('${outputUrl}')" title="Copy prompt">⧉</button>
               <button class="output-card-dl" onclick="downloadImage('${outputUrl}')" title="Download">⬇</button>
               <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
             </div>
@@ -2189,8 +2244,9 @@ async function generateImage(prompt, settings) {
       card.innerHTML = `
         <img src="${localUrl}" alt="Generated" loading="lazy" onclick="openLightbox('${localUrl}')">
         <div class="output-card-info">
-          <span>${model.split('/').pop()} · ${timestamp} <span class="mode-badge image">IMG</span></span>
+            <span>${model.split('/').pop()} · ${timestamp} <span class="mode-badge image">IMG</span></span>
           <div style="display:flex;gap:6px">
+            <button class="output-card-copy" onclick="copyPromptForOutput('${localUrl}')" title="Copy prompt">⧉</button>
             <button class="output-card-dl" onclick="downloadImage('${localUrl}')" title="Download">⬇</button>
             <button class="output-card-del" onclick="deleteOutput('${localUrl}', this)" title="Delete">✕</button>
           </div>
@@ -2206,7 +2262,7 @@ async function generateImage(prompt, settings) {
       id: ts,
       type: 'image',
       model: model.split('/').pop(),
-      prompt: prompt.slice(0,80),
+      prompt: prompt,
       thumb: localOutputs[0],
       time: timestamp,
       outputs: localOutputs,
@@ -2281,6 +2337,7 @@ async function generateVideo(prompt, settings) {
         <div class="output-card-info">
           <span>${model.split('/').pop()} · ${duration}s · ${timestamp} <span class="mode-badge video">VID</span></span>
           <div style="display:flex;gap:6px">
+            <button class="output-card-copy" onclick="copyPromptForOutput('${localUrl}')" title="Copy prompt">⧉</button>
             <button class="output-card-dl" onclick="downloadVideo('${localUrl}')" title="Download">⬇</button>
             <button class="output-card-del" onclick="deleteOutput('${localUrl}', this)" title="Delete">✕</button>
           </div>
@@ -2297,7 +2354,7 @@ async function generateVideo(prompt, settings) {
       id: ts,
       type: 'video',
       model: model.split('/').pop(),
-      prompt: prompt.slice(0,80),
+      prompt: prompt,
       thumb: thumbUrl,
       videoUrl: localOutputs[0],
       time: timestamp,
@@ -2456,9 +2513,10 @@ function renderHistory() {
       ${thumbHtml}
       <div class="history-info">
         <div class="history-model">${escHtml(h.model)} <span class="mode-badge ${isVideo ? 'video' : 'image'}" style="font-size:9px;padding:1px 5px">${isVideo ? 'VID' : 'IMG'}</span></div>
-        <div class="history-prompt">${escHtml(h.prompt)}</div>
+        <div class="history-prompt">${escHtml(getPromptText(h))}</div>
         <div class="history-time">${h.time}</div>
       </div>
+      <button class="history-copy-btn" onclick="event.stopPropagation();copyPromptByHistoryId('${h.id}')" title="Copy prompt">⧉</button>
     </div>`;
   }).join('');
 }
@@ -2530,6 +2588,7 @@ function renderCenterHistory() {
           <div class="output-card-info">
             <span>${escHtml(h.model || 'video')} <span class="mode-badge video">VID</span></span>
             <div style="display:flex;gap:6px">
+              <button class="output-card-copy" onclick="copyPromptForOutput('${outputUrl}')" title="Copy prompt">⧉</button>
               <button class="output-card-dl" onclick="downloadVideo('${outputUrl}')" title="Download">⬇</button>
               <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
             </div>
@@ -2541,6 +2600,7 @@ function renderCenterHistory() {
           <div class="output-card-info">
             <span>${escHtml(h.model || 'image')} <span class="mode-badge image">IMG</span></span>
             <div style="display:flex;gap:6px">
+              <button class="output-card-copy" onclick="copyPromptForOutput('${outputUrl}')" title="Copy prompt">⧉</button>
               <button class="output-card-dl" onclick="downloadImage('${outputUrl}')" title="Download">⬇</button>
               <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
             </div>
