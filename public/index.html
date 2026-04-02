@@ -1050,40 +1050,62 @@
       <!-- IMAGE model select -->
       <select class="select-styled image-settings" id="modelSelect">
         <optgroup label="── Seedream Image ──">
-          <option value="bytedance/seedream-v3">Seedream v3 (T2I)</option>
-          <option value="bytedance/seedream-v3.1">Seedream v3.1 (T2I)</option>
-          <option value="bytedance/seedream-v4" selected>Seedream v4 (T2I)</option>
-          <option value="bytedance/seedream-v4.5">Seedream v4.5 (T2I)</option>
-          <option value="bytedance/seedream-v4.5/sequential">Seedream v4.5 Sequential</option>
           <option value="bytedance/seedream-v4.5/edit">Seedream v4.5 Edit (I2I)</option>
-          <option value="bytedance/seedream-v4/edit">Seedream v4 Edit (I2I)</option>
-          <option value="bytedance/seedream-v4/edit-sequential">Seedream v4 Edit Sequential</option>
           <option value="bytedance/seedream-v5.0-lite">Seedream v5.0 Lite (T2I)</option>
           <option value="bytedance/seedream-v5.0-lite/edit">Seedream v5.0 Lite Edit (I2I)</option>
           <option value="bytedance/seedream-v5.0-lite/edit-sequential">Seedream v5.0 Lite Edit Sequential</option>
         </optgroup>
+        <optgroup label="── Qwen Image ──">
+          <option value="alibaba/qwen-image/text-to-image-max">Qwen-Image Text-to-image Max (T2I)</option>
+          <option value="alibaba/qwen-image/text-to-image-plus">Qwen-Image Text-to-image Plus (T2I)</option>
+          <option value="atlascloud/qwen-image/text-to-image">Qwen Image 2.0 (T2I)</option>
+          <option value="alibaba/qwen-image/edit-plus-20251215">Qwen-Image Edit Plus 20251215 (I2I)</option>
+          <option value="alibaba/qwen-image/edit-plus">Qwen-Image Edit Plus (I2I)</option>
+          <option value="alibaba/qwen-image/edit">Qwen-Image Edit (I2I)</option>
+          <option value="atlascloud/qwen-image/edit">Qwen Image Edit (I2I)</option>
+        </optgroup>
+        <optgroup label="── Wan Image ──">
+          <option value="alibaba/wan-2.6/text-to-image">Wan-2.6 Text-to-image (T2I)</option>
+          <option value="alibaba/wan-2.6/image-edit">Wan-2.6 Image-to-image (I2I)</option>
+          <option value="alibaba/wan-2.5/text-to-image">Wan-2.5 Text-to-image (T2I)</option>
+          <option value="alibaba/wan-2.5/image-edit">Wan-2.5 Image Edit (I2I)</option>
+        </optgroup>
       </select>
       <!-- VIDEO model select -->
       <select class="select-styled video-settings" id="videoModelSelect">
-        <optgroup label="── Seedance v1.5 Pro ──">
+        <optgroup label="── Seedance ──">
           <option value="bytedance/seedance-v1.5-pro/image-to-video" selected>Seedance v1.5 Pro Image-to-Video</option>
           <option value="bytedance/seedance-v1.5-pro/image-to-video-fast">Seedance v1.5 Pro Image-to-Video Fast</option>
           <option value="bytedance/seedance-v1.5-pro/text-to-video">Seedance v1.5 Pro Text-to-Video</option>
           <option value="bytedance/seedance-v1.5-pro/text-to-video-fast">Seedance v1.5 Pro Text-to-Video Fast</option>
-        </optgroup>
-        <optgroup label="── Seedance v1 Pro ──">
           <option value="bytedance/seedance-v1-pro-i2v-1080p">Seedance v1 Pro Image-to-Video 1080p</option>
           <option value="bytedance/seedance-v1-pro-i2v-720p">Seedance v1 Pro Image-to-Video 720p</option>
           <option value="bytedance/seedance-v1-pro-i2v-480p">Seedance v1 Pro Image-to-Video 480p</option>
           <option value="bytedance/seedance-v1-pro-t2v-1080p">Seedance v1 Pro Text-to-Video 1080p</option>
           <option value="bytedance/seedance-v1-pro-t2v-720p">Seedance v1 Pro Text-to-Video 720p</option>
           <option value="bytedance/seedance-v1-pro-t2v-480p">Seedance v1 Pro Text-to-Video 480p</option>
-        </optgroup>
-        <optgroup label="── Seedance v1 Lite ──">
           <option value="bytedance/seedance-v1-lite-i2v-720p">Seedance v1 Lite Image-to-Video 720p</option>
           <option value="bytedance/seedance-v1-lite-i2v-480p">Seedance v1 Lite Image-to-Video 480p</option>
           <option value="bytedance/seedance-v1-lite-t2v-720p">Seedance v1 Lite Text-to-Video 720p</option>
           <option value="bytedance/seedance-v1-lite-t2v-480p">Seedance v1 Lite Text-to-Video 480p</option>
+        </optgroup>
+        <optgroup label="── Wan Video ──">
+          <option value="alibaba/wan-2.6/text-to-video">Wan-2.6 Text-to-video (T2V)</option>
+          <option value="alibaba/wan-2.6/image-to-video">Wan-2.6 Image-to-video (I2V)</option>
+          <option value="alibaba/wan-2.6/image-to-video-flash">Wan-2.6 Image-to-video Flash (I2V)</option>
+          <option value="alibaba/wan-2.5/text-to-video">Wan-2.5 Text-to-video (T2V)</option>
+          <option value="alibaba/wan-2.5/text-to-video-fast">Wan-2.5 Text-to-video Fast (T2V)</option>
+          <option value="alibaba/wan-2.5/image-to-video">Wan-2.5 Image-to-video (I2V)</option>
+          <option value="alibaba/wan-2.5/image-to-video-fast">Wan-2.5 Image-to-video Fast (I2V)</option>
+          <option value="alibaba/wan-2.2/t2v-480p">Wan-2.2 t2v 480p</option>
+          <option value="alibaba/wan-2.2/t2v-720p">Wan-2.2 t2v 720p</option>
+          <option value="alibaba/wan-2.2/i2v-480p">Wan-2.2 i2v 480p</option>
+          <option value="alibaba/wan-2.2/i2v-720p">Wan-2.2 i2v 720p</option>
+        </optgroup>
+        <optgroup label="── Van Video ──">
+          <option value="atlascloud/van-2.6/text-to-video">Van-2.6 Text-to-video (T2V)</option>
+          <option value="atlascloud/van-2.5/text-to-video">Van-2.5 Text-to-video (T2V)</option>
+          <option value="atlascloud/van-2.5/image-to-video">Van-2.5 Image-to-video (I2V)</option>
         </optgroup>
       </select>
 
