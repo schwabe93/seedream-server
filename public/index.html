@@ -856,7 +856,6 @@
     }
 
     .left-panel,
-    .center-panel,
     .right-panel {
       grid-row: auto;
       width: 100%;
@@ -865,23 +864,28 @@
     }
 
     .center-panel {
-      order: 1;
-      min-height: 65vh;
+      display: contents;
     }
 
     .left-panel {
-      order: 2;
+      order: 4;
       border-top: 1px solid var(--border);
     }
 
     .right-panel {
-      order: 3;
+      order: 2;
       border-top: 1px solid var(--border);
     }
 
     .generate-area {
+      order: 3;
       padding: 14px;
       min-height: 44vh;
+    }
+
+    #refStrip {
+      order: 1;
+      padding: 0 12px 8px !important;
     }
 
     .output-grid {
@@ -890,6 +894,7 @@
     }
 
     .prompt-bar {
+      order: 1;
       padding: 12px;
     }
 
