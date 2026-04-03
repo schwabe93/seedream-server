@@ -911,10 +911,6 @@
       order: 2;
     }
 
-    #queueSection {
-      order: 2;
-    }
-
     .left-panel {
       order: 3;
     }
@@ -1255,18 +1251,6 @@
   <div id="activeReferenceSection" style="padding:12px 16px 8px;border-bottom:1px solid var(--border)">
     <div class="right-section-title">Active Reference</div>
     <div id="refSummary" style="font-size:11px;color:var(--muted)">No reference images selected.<br>Click a folder image to add as reference.</div>
-  </div>
-
-  <!-- QUEUE PANEL -->
-  <div class="queue-section" id="queueSection" style="display:none">
-    <div class="queue-header">
-      <div style="display:flex;align-items:center;gap:6px">
-        <span class="right-section-title" style="margin-bottom:0">Queue</span>
-        <span class="queue-badge" id="queueBadge">0</span>
-      </div>
-      <button class="queue-clear-btn" onclick="clearQueue()" title="Remove pending items">Clear pending</button>
-    </div>
-    <div class="queue-list" id="queueList"></div>
   </div>
 
   <div id="historySectionHeader" style="padding:12px 16px 8px;border-bottom:1px solid var(--border)">
@@ -2236,8 +2220,7 @@ function switchMode(mode, btn) {
 // QUEUE SYSTEM
 // ============================================================
 let generating = false;
-let generationQueue = []; // { id, mode, prompt, settings, status, label }
-let queueRunning = false;
+let activeGenerations = 0;
 const MAX_CONCURRENT_GENERATIONS = 3;
 
 function snapshotSettings(mode) {
@@ -2263,51 +2246,11 @@ function snapshotSettings(mode) {
   }
 }
 
-function renderQueue() {
-  const section = document.getElementById('queueSection');
-  const list = document.getElementById('queueList');
-  const badge = document.getElementById('queueBadge');
-
-  if (!generationQueue.length) { section.style.display = 'none'; return; }
-  section.style.display = 'block';
-
-  const pending = generationQueue.filter(j => j.status === 'pending').length;
-  badge.textContent = generationQueue.length;
-
-  list.innerHTML = '';
-  generationQueue.forEach(job => {
-    const item = document.createElement('div');
-    item.className = `queue-item ${job.status}`;
-
-    let icon;
-    if (job.status === 'running') icon = '<div class="queue-spinner"></div>';
-    else if (job.status === 'done') icon = '<span class="queue-status-icon">✓</span>';
-    else if (job.status === 'error') icon = '<span class="queue-status-icon">✕</span>';
-    else icon = '<span class="queue-status-icon" style="color:var(--muted)">◷</span>';
-
-    item.innerHTML = `
-      ${icon}
-      <div class="queue-item-info">
-        <div class="queue-item-model">${escHtml(job.label)}</div>
-        <div class="queue-item-prompt">${escHtml(job.prompt.slice(0, 60))}</div>
-      </div>
-      ${job.status === 'pending' ? `<button class="queue-item-remove" onclick="removeQueueItem('${job.id}')" title="Remove">✕</button>` : ''}
-    `;
-    list.appendChild(item);
-  });
-
-  // Auto-scroll to bottom
-  list.scrollTop = list.scrollHeight;
-}
-
-function removeQueueItem(id) {
-  generationQueue = generationQueue.filter(j => j.id !== id);
-  renderQueue();
-}
-
-function clearQueue() {
-  generationQueue = generationQueue.filter(j => j.status !== 'pending');
-  renderQueue();
+function updateGenerateButtonLabel() {
+  const label = activeGenerations > 0
+    ? `Running ${activeGenerations}/${MAX_CONCURRENT_GENERATIONS}`
+    : 'Generate';
+  document.getElementById('generateBtnText').textContent = label;
 }
 
 async function generate() {
@@ -2327,73 +2270,20 @@ async function generate() {
     }
   }
 
-  const modelShort = settings.model.split('/').pop();
-  const job = {
-    id: `q-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
-    mode, prompt, settings,
-    label: `${modelShort} · ${mode === 'image' ? settings.count + ' img' : settings.duration + 's video'}`,
-    status: 'pending',
-  };
+  if (activeGenerations >= MAX_CONCURRENT_GENERATIONS) {
+    showToast(`Maximum ${MAX_CONCURRENT_GENERATIONS} generations already running`, 'error');
+    return;
+  }
 
-  generationQueue.push(job);
-  renderQueue();
-  showToast(`Added to queue (${generationQueue.filter(j=>j.status==='pending').length} pending)`, 'success');
+  activeGenerations++;
+  updateGenerateButtonLabel();
 
-  if (!queueRunning) processQueue();
-}
-
-async function processQueue() {
-  if (queueRunning) return;
-  queueRunning = true;
-
-  const workerCount = Math.max(1, MAX_CONCURRENT_GENERATIONS);
-  const workers = Array.from({ length: workerCount }, () => queueWorker());
-  await Promise.all(workers);
-
-  queueRunning = false;
-  document.getElementById('generateBtnText').textContent = 'Generate';
-}
-
-function updateQueueButtonLabel() {
-  const pending = generationQueue.filter(j => j.status === 'pending').length;
-  const running = generationQueue.filter(j => j.status === 'running').length;
-  const label = running > 0
-    ? `Running ${running}/${MAX_CONCURRENT_GENERATIONS} · ${pending} queued`
-    : (pending > 0 ? `Queue: ${pending}` : 'Generate');
-  document.getElementById('generateBtnText').textContent = label;
-}
-
-function claimNextPendingJob() {
-  const job = generationQueue.find(j => j.status === 'pending');
-  if (!job) return null;
-  job.status = 'running';
-  return job;
-}
-
-async function queueWorker() {
-  while (true) {
-    const job = claimNextPendingJob();
-    if (!job) return;
-
-    updateQueueButtonLabel();
-    renderQueue();
-
-    try {
-      if (job.mode === 'image') await generateImage(job.prompt, job.settings);
-      else await generateVideo(job.prompt, job.settings);
-      job.status = 'done';
-    } catch (err) {
-      job.status = 'error';
-    } finally {
-      updateQueueButtonLabel();
-      renderQueue();
-      // Remove done/error items after 3s to keep list tidy
-      setTimeout(() => {
-        generationQueue = generationQueue.filter(j => j.status === 'pending' || j.status === 'running');
-        renderQueue();
-        updateQueueButtonLabel();
-      }, 3000);
-    }
+  try {
+    if (mode === 'image') await generateImage(prompt, settings);
+    else await generateVideo(prompt, settings);
+  } finally {
+    activeGenerations = Math.max(0, activeGenerations - 1);
+    updateGenerateButtonLabel();
   }
 }
 
