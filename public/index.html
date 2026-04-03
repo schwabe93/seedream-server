@@ -875,10 +875,11 @@
     .right-panel {
       order: 2;
       border-top: 1px solid var(--border);
+      display: contents;
     }
 
     .generate-area {
-      order: 3;
+      order: 4;
       padding: 14px;
       min-height: 44vh;
     }
@@ -896,6 +897,34 @@
     .prompt-bar {
       order: 1;
       padding: 12px;
+    }
+
+    #generationSettingsSection {
+      order: 2;
+    }
+
+    #autosaveSection {
+      order: 2;
+    }
+
+    #activeReferenceSection {
+      order: 2;
+    }
+
+    #queueSection {
+      order: 2;
+    }
+
+    .left-panel {
+      order: 3;
+    }
+
+    #historySectionHeader {
+      order: 5;
+    }
+
+    #historyList {
+      order: 6;
     }
 
     .prompt-input-row {
@@ -1154,7 +1183,7 @@
 
 <!-- RIGHT PANEL -->
 <aside class="right-panel">
-  <div class="right-section">
+  <div class="right-section" id="generationSettingsSection">
     <div class="right-section-title">Generation Settings</div>
 
     <!-- Image settings -->
@@ -1193,7 +1222,7 @@
     </div>
   </div>
 
-  <div class="right-section">
+  <div class="right-section" id="autosaveSection">
     <div class="right-section-title">Auto-Save Output Folder</div>
 
     <div class="save-folder-bar" id="saveFolderBar">
@@ -1223,7 +1252,7 @@
     </div>
   </div>
 
-  <div style="padding:12px 16px 8px;border-bottom:1px solid var(--border)">
+  <div id="activeReferenceSection" style="padding:12px 16px 8px;border-bottom:1px solid var(--border)">
     <div class="right-section-title">Active Reference</div>
     <div id="refSummary" style="font-size:11px;color:var(--muted)">No reference images selected.<br>Click a folder image to add as reference.</div>
   </div>
@@ -1240,7 +1269,7 @@
     <div class="queue-list" id="queueList"></div>
   </div>
 
-  <div style="padding:12px 16px 8px;border-bottom:1px solid var(--border)">
+  <div id="historySectionHeader" style="padding:12px 16px 8px;border-bottom:1px solid var(--border)">
     <div class="right-section-title">Generation History</div>
   </div>
   <div class="history-list" id="historyList">
