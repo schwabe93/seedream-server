@@ -1376,7 +1376,7 @@
     <select class="modal-input" id="promptImportFolderSelect"></select>
     <textarea class="modal-textarea" id="promptImportText" placeholder="Paste prompts here..." rows="10"></textarea>
     <div style="font-size:11px;color:var(--muted);margin:-6px 0 12px">
-      One numbered block becomes one saved prompt. If no numbering is found, blank lines are used as separators.
+      If the text contains <code style="background:var(--bg);padding:1px 5px;border-radius:4px">Speichere als:</code>, a subfolder is created automatically under the selected target folder. Without that structure, prompts are imported directly into the selected folder.
     </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal('promptImportModal')">Cancel</button>
@@ -2214,6 +2214,73 @@ function parseImportedPrompts(raw) {
     .filter(Boolean);
 }
 
+function sanitizeImportedFolderName(value) {
+  const clean = String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .split('/')
+    .pop()
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean || 'Imported';
+}
+
+function parseStructuredPromptImport(raw) {
+  const text = String(raw || '').replace(/\r\n/g, '\n').trim();
+  if (!text) return [];
+
+  const lines = text.split('\n');
+  const groups = [];
+  let currentCategory = '';
+  let currentSaveAs = '';
+  let buffer = [];
+
+  function flushGroup() {
+    const joined = buffer.join('\n').trim();
+    if (!joined) {
+      buffer = [];
+      return;
+    }
+
+    const promptsInGroup = parseImportedPrompts(joined.replace(/^text\s*/i, '').trim());
+    if (promptsInGroup.length) {
+      groups.push({
+        category: currentCategory || '',
+        saveAs: currentSaveAs || '',
+        folderName: sanitizeImportedFolderName(currentSaveAs || currentCategory || 'Imported'),
+        prompts: promptsInGroup,
+      });
+    }
+    buffer = [];
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    const categoryMatch = line.match(/^Kategorie:\s*(.+)$/i);
+    const saveAsMatch = line.match(/^Speichere\s+als:\s*(.+)$/i);
+
+    if (categoryMatch) {
+      flushGroup();
+      currentCategory = categoryMatch[1].trim();
+      currentSaveAs = '';
+      continue;
+    }
+
+    if (saveAsMatch) {
+      flushGroup();
+      currentSaveAs = saveAsMatch[1].trim();
+      continue;
+    }
+
+    buffer.push(rawLine);
+  }
+
+  flushGroup();
+  return groups.filter(group => group.prompts.length);
+}
+
 function buildImportedPromptName(text, index) {
   const clean = String(text || '').replace(/\s+/g, ' ').trim();
   const short = clean.split(' ').slice(0, 6).join(' ');
@@ -2222,25 +2289,67 @@ function buildImportedPromptName(text, index) {
 
 function confirmImportPrompts() {
   const raw = document.getElementById('promptImportText').value;
-  const folderId = document.getElementById('promptImportFolderSelect').value || promptFolders[0]?.id;
-  const parsed = parseImportedPrompts(raw);
+  const topLevelFolderId = document.getElementById('promptImportFolderSelect').value || promptFolders[0]?.id;
+  const structuredGroups = parseStructuredPromptImport(raw);
 
-  if (!parsed.length) {
-    showToast('No prompts found to import', 'error');
+  if (!structuredGroups.length) {
+    const parsed = parseImportedPrompts(raw);
+    if (!parsed.length) {
+      showToast('No prompts found to import', 'error');
+      return;
+    }
+
+    let added = 0;
+    parsed.forEach((text, index) => {
+      if (prompts.find(p => p.text === text)) return;
+      prompts.unshift({
+        id: makeId('prompt'),
+        name: buildImportedPromptName(text, index),
+        text,
+        folderId: topLevelFolderId,
+      });
+      added++;
+    });
+
+    saveData();
+    renderPrompts();
+    closeModal('promptImportModal');
+    showToast(`${added} prompt${added === 1 ? '' : 's'} imported`, 'success');
     return;
   }
 
   let added = 0;
-  parsed.forEach((text, index) => {
-    if (prompts.find(p => p.text === text)) return;
-    prompts.unshift({
-      id: makeId('prompt'),
-      name: buildImportedPromptName(text, index),
-      text,
-      folderId,
+  structuredGroups.forEach(group => {
+    let subfolder = promptFolders.find(f =>
+      String(f.parentId || '') === String(topLevelFolderId || '') &&
+      f.name.toLowerCase() === group.folderName.toLowerCase()
+    );
+
+    if (!subfolder) {
+      subfolder = {
+        id: makeId('pf'),
+        name: group.folderName,
+        parentId: topLevelFolderId || null,
+      };
+      promptFolders.push(subfolder);
+    }
+
+    group.prompts.forEach((text, index) => {
+      if (prompts.find(p => p.text === text)) return;
+      prompts.unshift({
+        id: makeId('prompt'),
+        name: buildImportedPromptName(text, index),
+        text,
+        folderId: subfolder.id,
+      });
+      added++;
     });
-    added++;
   });
+
+  if (!added) {
+    showToast('No prompts found to import', 'error');
+    return;
+  }
 
   saveData();
   renderPrompts();
