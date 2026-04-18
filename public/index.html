@@ -1636,11 +1636,13 @@ function applyWorkspaceState(state) {
   if (Array.isArray(state.openPromptFolderIds)) {
     state.openPromptFolderIds.forEach(id => { if (id) openPromptFolderIds.add(id); });
   }
+  promptFolderStateInitialized = true;
 
   openReferenceFolderIds.clear();
   if (Array.isArray(state.openReferenceFolderIds)) {
     state.openReferenceFolderIds.forEach(id => { if (id) openReferenceFolderIds.add(id); });
   }
+  referenceFolderStateInitialized = true;
 
   const imageModelEl = document.getElementById('modelSelect');
   if (state.imageModel && optionExists(imageModelEl, state.imageModel)) imageModelEl.value = state.imageModel;
@@ -1810,6 +1812,8 @@ let refImages = [];
 let currentTab = 'generate';
 const openPromptFolderIds = new Set();
 const openReferenceFolderIds = new Set();
+let promptFolderStateInitialized = false;
+let referenceFolderStateInitialized = false;
 
 const DEFAULT_IMAGE_SETTINGS = {
   model: 'bytedance/seedream-v4.5/edit',
@@ -2158,8 +2162,9 @@ function renderPrompts() {
     return;
   }
   const rootFolders = getChildren(promptFolders, null);
-  if (!openPromptFolderIds.size && rootFolders.length) {
+  if (!promptFolderStateInitialized && !openPromptFolderIds.size && rootFolders.length) {
     openPromptFolderIds.add(rootFolders[0].id);
+    promptFolderStateInitialized = true;
   }
 
   function countPromptsInBranch(folderId) {
@@ -2180,6 +2185,7 @@ function renderPrompts() {
           <span class="folder-icon">📝</span>
           <span class="prompt-folder-name">${escHtml(folder.name)}</span>
           <span class="prompt-folder-count">${count}</span>
+          <button class="icon-btn" onclick="event.stopPropagation();deletePromptFolder('${folder.id}')" title="Delete folder">✕</button>
           <span class="prompt-folder-chevron">▶</span>
         </div>
         <div class="prompt-folder-prompts">
@@ -2230,6 +2236,38 @@ function deletePrompt(id) {
   prompts = prompts.filter(p => String(p.id) !== String(id));
   saveData();
   renderPrompts();
+}
+
+function getPromptFolderBranchIds(folderId) {
+  const ids = [folderId];
+  const children = getChildren(promptFolders, folderId);
+  children.forEach(child => {
+    ids.push(...getPromptFolderBranchIds(child.id));
+  });
+  return ids;
+}
+
+function deletePromptFolder(id) {
+  const folder = promptFolders.find(f => String(f.id) === String(id));
+  if (!folder) return;
+
+  const branchIds = getPromptFolderBranchIds(folder.id);
+  const childFolderCount = Math.max(0, branchIds.length - 1);
+  const promptCount = prompts.filter(p => branchIds.includes(p.folderId)).length;
+  const label = childFolderCount
+    ? `"${folder.name}" mit ${childFolderCount} Unterordner${childFolderCount === 1 ? '' : 'n'} und ${promptCount} Prompt${promptCount === 1 ? '' : 's'}`
+    : `"${folder.name}" mit ${promptCount} Prompt${promptCount === 1 ? '' : 's'}`;
+
+  if (!confirm(`Prompt-Ordner ${label} wirklich löschen?`)) return;
+
+  prompts = prompts.filter(p => !branchIds.includes(p.folderId));
+  promptFolders = promptFolders.filter(f => !branchIds.includes(f.id));
+  branchIds.forEach(branchId => openPromptFolderIds.delete(branchId));
+
+  ensurePromptFolderShape();
+  saveData();
+  renderPrompts();
+  showToast('Prompt folder deleted', 'success');
 }
 
 function openSavePromptModal() {
@@ -2550,8 +2588,9 @@ function renderFolders() {
     return;
   }
   const rootFolders = getChildren(folders, null);
-  if (!openReferenceFolderIds.size && rootFolders.length) {
+  if (!referenceFolderStateInitialized && !openReferenceFolderIds.size && rootFolders.length) {
     openReferenceFolderIds.add(rootFolders[0].id);
+    referenceFolderStateInitialized = true;
   }
 
   function renderFolderNode(folder) {
@@ -3716,6 +3755,10 @@ function applyImport(data, mode) {
 async function clearAllData() {
   if (!confirm('Delete ALL data — prompts, folders, history, API key? This cannot be undone.')) return;
   prompts = []; promptFolders = []; folders = []; history = []; apiKey = '';
+  openPromptFolderIds.clear();
+  openReferenceFolderIds.clear();
+  promptFolderStateInitialized = false;
+  referenceFolderStateInitialized = false;
   await Promise.all([
     serverDel('atlasApiKey'), serverDel('atlasPrompts'),
     serverDel('atlasPromptFolders'),
