@@ -168,14 +168,14 @@
     color: var(--muted);
     transition: transform 0.2s;
   }
-  .prompt-folder-item.open .prompt-folder-chevron { transform: rotate(90deg); }
+  .prompt-folder-item.open > .prompt-folder-header .prompt-folder-chevron { transform: rotate(90deg); }
   .prompt-folder-prompts {
     padding: 0 6px 6px;
     display: none;
     flex-direction: column;
     gap: 4px;
   }
-  .prompt-folder-item.open .prompt-folder-prompts { display: flex; }
+  .prompt-folder-item.open > .prompt-folder-prompts { display: flex; }
   .nested-tree {
     margin-left: 12px;
     display: flex;
@@ -231,7 +231,7 @@
     padding: 1px 6px; border-radius: 10px; font-family: var(--mono);
   }
   .folder-chevron { font-size: 10px; color: var(--muted); transition: transform 0.2s; }
-  .folder-item.open .folder-chevron { transform: rotate(90deg); }
+  .folder-item.open > .folder-header .folder-chevron { transform: rotate(90deg); }
 
   .folder-images {
     padding: 6px 8px 8px;
@@ -240,7 +240,7 @@
     display: none;
     min-height: 52px;
   }
-  .folder-item.open .folder-images { display: flex; }
+  .folder-item.open > .folder-images { display: flex; }
   .folder-children {
     display: none;
     margin-left: 12px;
@@ -2521,6 +2521,7 @@ function confirmImportPrompts() {
   }
 
   let added = 0;
+  let moved = 0;
   structuredGroups.forEach(group => {
     let categoryFolder = null;
     if (group.category) {
@@ -2558,7 +2559,14 @@ function confirmImportPrompts() {
     openPromptFolderIds.add(subfolder.id);
 
     group.prompts.forEach((text, index) => {
-      if (prompts.find(p => p.text === text)) return;
+      const existingPrompt = prompts.find(p => p.text === text);
+      if (existingPrompt) {
+        if (existingPrompt.folderId !== subfolder.id) {
+          existingPrompt.folderId = subfolder.id;
+          moved++;
+        }
+        return;
+      }
       prompts.unshift({
         id: makeId('prompt'),
         name: buildImportedPromptName(text, index),
@@ -2569,7 +2577,7 @@ function confirmImportPrompts() {
     });
   });
 
-  if (!added) {
+  if (!added && !moved) {
     showToast('No prompts found to import', 'error');
     return;
   }
@@ -2577,7 +2585,10 @@ function confirmImportPrompts() {
   saveData();
   renderPrompts();
   closeModal('promptImportModal');
-  showToast(`${added} prompt${added === 1 ? '' : 's'} imported`, 'success');
+  const parts = [];
+  if (added) parts.push(`${added} imported`);
+  if (moved) parts.push(`${moved} organized`);
+  showToast(`Prompts ready: ${parts.join(' · ')}`, 'success');
 }
 
 function movePrompt(id) {
