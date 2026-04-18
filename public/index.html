@@ -104,7 +104,7 @@
     background: var(--surface);
     border-right: 1px solid var(--border);
     display: flex; flex-direction: column;
-    overflow: hidden;
+    overflow-y: auto;
   }
 
   .panel-section {
@@ -127,8 +127,50 @@
   .prompt-list {
     padding: 0 10px 10px;
     display: flex; flex-direction: column; gap: 4px;
-    max-height: 230px; overflow-y: auto;
+    overflow: visible;
   }
+  .prompt-folder-item {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .prompt-folder-header {
+    padding: 8px 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s;
+  }
+  .prompt-folder-header:hover { background: #1d1d2c; }
+  .prompt-folder-name {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    flex: 1;
+  }
+  .prompt-folder-count {
+    font-size: 10px;
+    background: var(--accent);
+    color: #fff;
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-family: var(--mono);
+  }
+  .prompt-folder-chevron {
+    font-size: 10px;
+    color: var(--muted);
+    transition: transform 0.2s;
+  }
+  .prompt-folder-item.open .prompt-folder-chevron { transform: rotate(90deg); }
+  .prompt-folder-prompts {
+    padding: 0 6px 6px;
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .prompt-folder-item.open .prompt-folder-prompts { display: flex; }
   .prompt-item {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 8px; padding: 8px 10px;
@@ -159,7 +201,7 @@
   .folder-list {
     padding: 0 10px 10px;
     display: flex; flex-direction: column; gap: 4px;
-    flex: 1; overflow-y: auto;
+    flex: none; overflow: visible;
   }
   .folder-item {
     background: var(--card); border: 1px solid var(--border);
@@ -1028,7 +1070,10 @@
   <div class="panel-section">
     <div class="panel-section-header">
       Saved Prompts
-      <button onclick="openSavePromptModal()" title="New Prompt">＋</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button onclick="addPromptFolder()" title="New Prompt Folder">📁</button>
+        <button onclick="openSavePromptModal()" title="New Prompt">＋</button>
+      </div>
     </div>
     <div class="prompt-list" id="promptList"></div>
   </div>
@@ -1266,6 +1311,7 @@
   <div class="modal">
     <h3>Save Prompt</h3>
     <input class="modal-input" id="promptNameInput" placeholder="Prompt name…">
+    <select class="modal-input" id="promptFolderSelect"></select>
     <textarea class="modal-textarea" id="promptTextInput" placeholder="Prompt text…" rows="4"></textarea>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal('saveModal')">Cancel</button>
@@ -1282,6 +1328,17 @@
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal('folderModal')">Cancel</button>
       <button class="btn-primary" onclick="confirmAddFolder()">Create</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="promptFolderModal">
+  <div class="modal">
+    <h3>New Prompt Folder</h3>
+    <input class="modal-input" id="promptFolderNameInput" placeholder="Prompt folder name…">
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('promptFolderModal')">Cancel</button>
+      <button class="btn-primary" onclick="confirmAddPromptFolder()">Create</button>
     </div>
   </div>
 </div>
@@ -1564,6 +1621,7 @@ async function prepareJobRefs(refs) {
 // ── Runtime state ──────────────────────────────────────────────────────────
 let apiKey    = '';
 let prompts   = [];
+let promptFolders = [];
 let folders   = [];
 let history   = [];
 let refImages = [];
@@ -1574,6 +1632,28 @@ const DEFAULT_IMAGE_SETTINGS = {
   size: '2048*2048',
   count: 1,
 };
+
+function makeId(prefix = 'id') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function ensurePromptFolderShape() {
+  if (!Array.isArray(promptFolders) || !promptFolders.length) {
+    promptFolders = [{ id: 'pf-general', name: 'General' }];
+  }
+
+  prompts = (Array.isArray(prompts) ? prompts : []).map((p, idx) => {
+    const folderId = p.folderId && promptFolders.some(f => f.id === p.folderId)
+      ? p.folderId
+      : promptFolders[0].id;
+    return {
+      id: p.id || makeId(`prompt-${idx}`),
+      name: p.name || 'Prompt',
+      text: p.text || '',
+      folderId,
+    };
+  });
+}
 
 function optionExists(selectEl, value) {
   return !!selectEl && [...selectEl.options].some(o => o.value === String(value));
@@ -1621,8 +1701,9 @@ async function startPolling() {
 }
 
 async function syncFromServer() {
-  const [savedPrompts, savedFolders, savedHistory] = await Promise.all([
+  const [savedPrompts, savedPromptFolders, savedFolders, savedHistory] = await Promise.all([
     serverGet('atlasPrompts', null),
+    serverGet('atlasPromptFolders', null),
     serverGet('atlasFolders', null),
     serverGet('atlasHistory', []),
   ]);
@@ -1631,7 +1712,10 @@ async function syncFromServer() {
 
   if (Array.isArray(savedPrompts) && JSON.stringify(savedPrompts) !== JSON.stringify(prompts)) {
     prompts = savedPrompts;
-    renderPrompts();
+    changed = true;
+  }
+  if (Array.isArray(savedPromptFolders) && JSON.stringify(savedPromptFolders) !== JSON.stringify(promptFolders)) {
+    promptFolders = savedPromptFolders;
     changed = true;
   }
   if (Array.isArray(savedFolders) && JSON.stringify(savedFolders) !== JSON.stringify(folders)) {
@@ -1644,6 +1728,11 @@ async function syncFromServer() {
     renderHistory();
     restoreOutputGrid();
     changed = true;
+  }
+
+  if (changed) {
+    ensurePromptFolderShape();
+    renderPrompts();
   }
 
   if (changed) showToast('Synced from server', 'success');
@@ -1708,9 +1797,10 @@ function restoreOutputGrid() {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 async function bootFromServer() {
-  const [savedKey, savedPrompts, savedFolders, savedHistory, savedAutosave, savedImageDefaults] = await Promise.all([
+  const [savedKey, savedPrompts, savedPromptFolders, savedFolders, savedHistory, savedAutosave, savedImageDefaults] = await Promise.all([
     serverGet('atlasApiKey', ''),
     serverGet('atlasPrompts', null),
+    serverGet('atlasPromptFolders', null),
     serverGet('atlasFolders', null),
     serverGet('atlasHistory', []),
     serverGet('atlasAutosave', '0'),
@@ -1725,13 +1815,21 @@ async function bootFromServer() {
     prompts = savedPrompts;
   } else {
     prompts = [
-      { id: Date.now()+1, name:'Cinematic Portrait',  text:'Cinematic close-up portrait, dramatic side lighting, shallow depth of field, film grain, 35mm' },
-      { id: Date.now()+2, name:'Fantasy Landscape',   text:'Epic fantasy landscape with floating islands, waterfalls, magical glowing trees, volumetric light, ultra-detailed' },
-      { id: Date.now()+3, name:'Product Shot',        text:'Minimalist product photography, white background, professional studio lighting, sharp focus, commercial quality' },
-      { id: Date.now()+4, name:'Poster Design',       text:'Bold retro-futuristic poster design, geometric shapes, vivid neon colors, Bauhaus-inspired typography, vector art style' },
+      { id: makeId('prompt'), name:'Cinematic Portrait',  text:'Cinematic close-up portrait, dramatic side lighting, shallow depth of field, film grain, 35mm' },
+      { id: makeId('prompt'), name:'Fantasy Landscape',   text:'Epic fantasy landscape with floating islands, waterfalls, magical glowing trees, volumetric light, ultra-detailed' },
+      { id: makeId('prompt'), name:'Product Shot',        text:'Minimalist product photography, white background, professional studio lighting, sharp focus, commercial quality' },
+      { id: makeId('prompt'), name:'Poster Design',       text:'Bold retro-futuristic poster design, geometric shapes, vivid neon colors, Bauhaus-inspired typography, vector art style' },
     ];
-    await serverSet('atlasPrompts', prompts);
   }
+
+  if (Array.isArray(savedPromptFolders)) {
+    promptFolders = savedPromptFolders;
+  } else {
+    promptFolders = [{ id: 'pf-general', name: 'General' }];
+  }
+  ensurePromptFolderShape();
+  if (!Array.isArray(savedPromptFolders)) await serverSet('atlasPromptFolders', promptFolders);
+  if (!Array.isArray(savedPrompts)) await serverSet('atlasPrompts', prompts);
 
   if (Array.isArray(savedFolders)) {
     folders = savedFolders;
@@ -1815,39 +1913,71 @@ function renderPrompts() {
     el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 6px 8px">No saved prompts yet.</div>';
     return;
   }
-  el.innerHTML = prompts.map((p, i) => `
-    <div class="prompt-item" onclick="usePrompt(${i})">
-      <div style="flex:1;overflow:hidden">
-        <div class="prompt-name">${escHtml(p.name)}</div>
-        <div class="prompt-text">${escHtml(p.text)}</div>
+  const openSet = new Set();
+  promptFolders.forEach((_, idx) => {
+    const existing = document.getElementById(`prompt-folder-${idx}`);
+    if (existing && existing.classList.contains('open')) openSet.add(idx);
+  });
+
+  el.innerHTML = promptFolders.map((folder, idx) => {
+    const items = prompts.filter(p => p.folderId === folder.id);
+    const isOpen = openSet.has(idx) || (!openSet.size && idx === 0);
+    return `
+      <div class="prompt-folder-item${isOpen ? ' open' : ''}" id="prompt-folder-${idx}">
+        <div class="prompt-folder-header" onclick="togglePromptFolder(${idx})">
+          <span class="folder-icon">📝</span>
+          <span class="prompt-folder-name">${escHtml(folder.name)}</span>
+          <span class="prompt-folder-count">${items.length}</span>
+          <span class="prompt-folder-chevron">▶</span>
+        </div>
+        <div class="prompt-folder-prompts">
+          ${items.length ? items.map(p => `
+            <div class="prompt-item" onclick="usePrompt('${p.id}')">
+              <div style="flex:1;overflow:hidden">
+                <div class="prompt-name">${escHtml(p.name)}</div>
+                <div class="prompt-text">${escHtml(p.text)}</div>
+              </div>
+              <div class="prompt-actions">
+                <button class="icon-btn use" onclick="event.stopPropagation();usePrompt('${p.id}')" title="Use">↑</button>
+                <button class="icon-btn use" onclick="event.stopPropagation();movePrompt('${p.id}')" title="Move">↔</button>
+                <button class="icon-btn" onclick="event.stopPropagation();deletePrompt('${p.id}')" title="Delete">✕</button>
+              </div>
+            </div>
+          `).join('') : '<div style="font-size:11px;color:var(--muted);padding:8px">No prompts in this folder yet.</div>'}
+        </div>
       </div>
-      <div class="prompt-actions">
-        <button class="icon-btn use" onclick="event.stopPropagation();usePrompt(${i})" title="Use">↑</button>
-        <button class="icon-btn" onclick="event.stopPropagation();deletePrompt(${i})" title="Delete">✕</button>
-      </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
-function usePrompt(i) {
-  document.getElementById('promptTextarea').value = prompts[i].text;
+function togglePromptFolder(idx) {
+  const el = document.getElementById(`prompt-folder-${idx}`);
+  if (el) el.classList.toggle('open');
 }
 
-function deletePrompt(i) {
-  prompts.splice(i, 1);
+function usePrompt(id) {
+  const prompt = prompts.find(p => String(p.id) === String(id));
+  if (prompt) document.getElementById('promptTextarea').value = prompt.text;
+}
+
+function deletePrompt(id) {
+  prompts = prompts.filter(p => String(p.id) !== String(id));
   saveData();
   renderPrompts();
 }
 
 function openSavePromptModal() {
+  ensurePromptFolderShape();
   document.getElementById('promptNameInput').value = '';
   document.getElementById('promptTextInput').value = document.getElementById('promptTextarea').value;
+  document.getElementById('promptFolderSelect').innerHTML = promptFolders.map(f => `<option value="${f.id}">${escHtml(f.name)}</option>`).join('');
   document.getElementById('saveModal').classList.add('show');
 }
 
 function saveCurrentPrompt() {
   document.getElementById('promptNameInput').value = '';
   document.getElementById('promptTextInput').value = document.getElementById('promptTextarea').value;
+  document.getElementById('promptFolderSelect').innerHTML = promptFolders.map(f => `<option value="${f.id}">${escHtml(f.name)}</option>`).join('');
   document.getElementById('saveModal').classList.add('show');
 }
 
@@ -1860,12 +1990,49 @@ async function saveImageDefaults() {
 function confirmSavePrompt() {
   const name = document.getElementById('promptNameInput').value.trim();
   const text = document.getElementById('promptTextInput').value.trim();
+  const folderId = document.getElementById('promptFolderSelect').value || promptFolders[0]?.id;
   if (!name || !text) { showToast('Name and prompt required', 'error'); return; }
-  prompts.unshift({ name, text });
+  prompts.unshift({ id: makeId('prompt'), name, text, folderId });
   saveData();
   renderPrompts();
   closeModal('saveModal');
   showToast('Prompt saved!', 'success');
+}
+
+function addPromptFolder() {
+  document.getElementById('promptFolderNameInput').value = '';
+  document.getElementById('promptFolderModal').classList.add('show');
+}
+
+function confirmAddPromptFolder() {
+  const name = document.getElementById('promptFolderNameInput').value.trim();
+  if (!name) return;
+  if (promptFolders.some(f => f.name.toLowerCase() === name.toLowerCase())) {
+    showToast('Prompt folder already exists', 'error');
+    return;
+  }
+  promptFolders.push({ id: makeId('pf'), name });
+  saveData();
+  renderPrompts();
+  closeModal('promptFolderModal');
+  showToast('Prompt folder created!', 'success');
+}
+
+function movePrompt(id) {
+  const item = prompts.find(p => String(p.id) === String(id));
+  if (!item) return;
+  const currentFolder = promptFolders.find(f => f.id === item.folderId)?.name || 'General';
+  const target = prompt(`Move "${item.name}" to folder:`, currentFolder);
+  if (!target || !target.trim()) return;
+  let folder = promptFolders.find(f => f.name.toLowerCase() === target.trim().toLowerCase());
+  if (!folder) {
+    folder = { id: makeId('pf'), name: target.trim() };
+    promptFolders.push(folder);
+  }
+  item.folderId = folder.id;
+  saveData();
+  renderPrompts();
+  showToast('Prompt moved!', 'success');
 }
 
 // ============================================================
@@ -2850,6 +3017,7 @@ function saveData() {
   // Fire-and-forget bulk save
   serverSetBulk([
     { key: 'atlasPrompts', value: JSON.stringify(prompts) },
+    { key: 'atlasPromptFolders', value: JSON.stringify(promptFolders) },
     { key: 'atlasFolders', value: JSON.stringify(folders) },
     { key: 'atlasHistory', value: JSON.stringify(lightHistory) },
   ]);
@@ -2867,12 +3035,12 @@ function openDataManager() {
   // Refresh stats
   const statsEl = document.getElementById('dmStats');
   const folderImgCount = folders.reduce((a, f) => a + f.images.length, 0);
-  const storageKb = Math.round(JSON.stringify({prompts, folders, history}).length / 1024);
+  const storageKb = Math.round(JSON.stringify({prompts, promptFolders, folders, history}).length / 1024);
   statsEl.innerHTML = `
     <div class="dm-stat"><div class="dm-stat-val">${prompts.length}</div><div class="dm-stat-label">Saved Prompts</div></div>
+    <div class="dm-stat"><div class="dm-stat-val">${promptFolders.length}</div><div class="dm-stat-label">Prompt Folders</div></div>
     <div class="dm-stat"><div class="dm-stat-val">${folders.length}</div><div class="dm-stat-label">Folders</div></div>
     <div class="dm-stat"><div class="dm-stat-val">${folderImgCount}</div><div class="dm-stat-label">Reference Images</div></div>
-    <div class="dm-stat"><div class="dm-stat-val">${storageKb} KB</div><div class="dm-stat-label">Estimated Export Size</div></div>
   `;
   document.getElementById('dataManagerModal').classList.add('show');
 }
@@ -2884,6 +3052,7 @@ function buildExportPayload(what = 'all') {
     _exported: new Date().toISOString(),
   };
   if (what === 'all' || what === 'prompts') payload.prompts = prompts;
+  if (what === 'all' || what === 'prompts') payload.promptFolders = promptFolders;
   if (what === 'all' || what === 'folders') payload.folders = folders;
   if (what === 'all') {
     payload.apiKey = apiKey;
@@ -2964,6 +3133,7 @@ function applyImport(data, mode) {
   if (mode === 'replace') {
     if (!confirm('Replace ALL local data with imported file? This cannot be undone.')) return;
     if (data.prompts) prompts = data.prompts;
+    if (data.promptFolders) promptFolders = data.promptFolders;
     if (data.folders) folders = data.folders;
     if (data.history) history = data.history;
     if (data.apiKey) {
@@ -2980,6 +3150,11 @@ function applyImport(data, mode) {
         if (!prompts.find(x => x.name === p.name && x.text === p.text)) {
           prompts.push(p); addedPrompts++;
         }
+      }
+    }
+    if (data.promptFolders) {
+      for (const f of data.promptFolders) {
+        if (!promptFolders.find(x => x.name === f.name)) promptFolders.push(f);
       }
     }
     if (data.folders) {
@@ -3000,6 +3175,7 @@ function applyImport(data, mode) {
     showToast(`Merged: +${addedPrompts} prompts, +${addedFolders} folders`, 'success');
   }
 
+  ensurePromptFolderShape();
   saveData();
   renderPrompts();
   renderFolders();
@@ -3010,9 +3186,10 @@ function applyImport(data, mode) {
 
 async function clearAllData() {
   if (!confirm('Delete ALL data — prompts, folders, history, API key? This cannot be undone.')) return;
-  prompts = []; folders = []; history = []; apiKey = '';
+  prompts = []; promptFolders = []; folders = []; history = []; apiKey = '';
   await Promise.all([
     serverDel('atlasApiKey'), serverDel('atlasPrompts'),
+    serverDel('atlasPromptFolders'),
     serverDel('atlasFolders'), serverDel('atlasHistory'),
   ]);
   document.getElementById('apiKeyInput').value = '';
