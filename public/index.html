@@ -122,6 +122,11 @@
     padding: 0 2px; transition: transform 0.2s;
   }
   .panel-section-header button:hover { transform: scale(1.2); }
+  .panel-section-header .header-btn-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
 
   /* PROMPTS LIST */
   .prompt-list {
@@ -1070,7 +1075,8 @@
   <div class="panel-section">
     <div class="panel-section-header">
       Saved Prompts
-      <div style="display:flex;gap:8px;align-items:center">
+      <div class="header-btn-row">
+        <button onclick="openPromptImportModal()" title="Import Prompts">⇪</button>
         <button onclick="addPromptFolder()" title="New Prompt Folder">📁</button>
         <button onclick="openSavePromptModal()" title="New Prompt">＋</button>
       </div>
@@ -1339,6 +1345,26 @@
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal('promptFolderModal')">Cancel</button>
       <button class="btn-primary" onclick="confirmAddPromptFolder()">Create</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="promptImportModal">
+  <div class="modal" style="width:520px;max-height:90vh;overflow-y:auto">
+    <h3>Import Prompts</h3>
+    <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px">
+      Upload a text file or paste text. Numbering like <code style="background:var(--bg);padding:1px 5px;border-radius:4px">1.</code>,
+      <code style="background:var(--bg);padding:1px 5px;border-radius:4px">2)</code> or standalone numbered lines will be removed automatically.
+    </div>
+    <input class="modal-input" id="promptImportFile" type="file" accept=".txt,.md,.text" onchange="loadPromptImportFile(this)">
+    <select class="modal-input" id="promptImportFolderSelect"></select>
+    <textarea class="modal-textarea" id="promptImportText" placeholder="Paste prompts here..." rows="10"></textarea>
+    <div style="font-size:11px;color:var(--muted);margin:-6px 0 12px">
+      One numbered block becomes one saved prompt. If no numbering is found, blank lines are used as separators.
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('promptImportModal')">Cancel</button>
+      <button class="btn-primary" onclick="confirmImportPrompts()">Import</button>
     </div>
   </div>
 </div>
@@ -1950,6 +1976,11 @@ function renderPrompts() {
   }).join('');
 }
 
+function buildPromptFolderOptions(selectedId = '') {
+  ensurePromptFolderShape();
+  return promptFolders.map(f => `<option value="${f.id}"${String(f.id) === String(selectedId) ? ' selected' : ''}>${escHtml(f.name)}</option>`).join('');
+}
+
 function togglePromptFolder(idx) {
   const el = document.getElementById(`prompt-folder-${idx}`);
   if (el) el.classList.toggle('open');
@@ -1970,14 +2001,14 @@ function openSavePromptModal() {
   ensurePromptFolderShape();
   document.getElementById('promptNameInput').value = '';
   document.getElementById('promptTextInput').value = document.getElementById('promptTextarea').value;
-  document.getElementById('promptFolderSelect').innerHTML = promptFolders.map(f => `<option value="${f.id}">${escHtml(f.name)}</option>`).join('');
+  document.getElementById('promptFolderSelect').innerHTML = buildPromptFolderOptions(promptFolders[0]?.id);
   document.getElementById('saveModal').classList.add('show');
 }
 
 function saveCurrentPrompt() {
   document.getElementById('promptNameInput').value = '';
   document.getElementById('promptTextInput').value = document.getElementById('promptTextarea').value;
-  document.getElementById('promptFolderSelect').innerHTML = promptFolders.map(f => `<option value="${f.id}">${escHtml(f.name)}</option>`).join('');
+  document.getElementById('promptFolderSelect').innerHTML = buildPromptFolderOptions(promptFolders[0]?.id);
   document.getElementById('saveModal').classList.add('show');
 }
 
@@ -2014,8 +2045,119 @@ function confirmAddPromptFolder() {
   promptFolders.push({ id: makeId('pf'), name });
   saveData();
   renderPrompts();
+  const folderSelect = document.getElementById('promptFolderSelect');
+  if (folderSelect) folderSelect.innerHTML = buildPromptFolderOptions(promptFolders[promptFolders.length - 1]?.id);
+  const importFolderSelect = document.getElementById('promptImportFolderSelect');
+  if (importFolderSelect) importFolderSelect.innerHTML = buildPromptFolderOptions(promptFolders[promptFolders.length - 1]?.id);
   closeModal('promptFolderModal');
   showToast('Prompt folder created!', 'success');
+}
+
+function openPromptImportModal() {
+  ensurePromptFolderShape();
+  document.getElementById('promptImportFile').value = '';
+  document.getElementById('promptImportText').value = '';
+  document.getElementById('promptImportFolderSelect').innerHTML = buildPromptFolderOptions(promptFolders[0]?.id);
+  document.getElementById('promptImportModal').classList.add('show');
+}
+
+function loadPromptImportFile(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('promptImportText').value = String(e.target?.result || '');
+  };
+  reader.readAsText(file);
+}
+
+function parseImportedPrompts(raw) {
+  const text = String(raw || '').replace(/\r\n/g, '\n').trim();
+  if (!text) return [];
+
+  const lines = text.split('\n');
+  const items = [];
+  let current = [];
+  let sawNumbering = false;
+
+  function pushCurrent() {
+    const joined = current.join('\n').trim();
+    if (!joined) {
+      current = [];
+      return;
+    }
+    items.push(joined);
+    current = [];
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    const numberedOnly = line.match(/^(\d+)\s*[\.\)\-:]?\s*$/);
+    const numberedInline = line.match(/^(\d+)\s*[\.\)\-:]\s+(.+)$/);
+
+    if (numberedOnly) {
+      sawNumbering = true;
+      pushCurrent();
+      continue;
+    }
+
+    if (numberedInline) {
+      sawNumbering = true;
+      pushCurrent();
+      current.push(numberedInline[2].trim());
+      continue;
+    }
+
+    if (!sawNumbering && line === '') {
+      pushCurrent();
+      continue;
+    }
+
+    if (sawNumbering && line === '' && !current.length) {
+      continue;
+    }
+
+    current.push(rawLine);
+  }
+  pushCurrent();
+
+  return items
+    .map(item => item.replace(/^\s*\d+\s*[\.\)\-:]\s*/, '').trim())
+    .filter(Boolean);
+}
+
+function buildImportedPromptName(text, index) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  const short = clean.split(' ').slice(0, 6).join(' ');
+  return short ? `${index + 1}. ${short.slice(0, 42)}` : `Imported Prompt ${index + 1}`;
+}
+
+function confirmImportPrompts() {
+  const raw = document.getElementById('promptImportText').value;
+  const folderId = document.getElementById('promptImportFolderSelect').value || promptFolders[0]?.id;
+  const parsed = parseImportedPrompts(raw);
+
+  if (!parsed.length) {
+    showToast('No prompts found to import', 'error');
+    return;
+  }
+
+  let added = 0;
+  parsed.forEach((text, index) => {
+    if (prompts.find(p => p.text === text)) return;
+    prompts.unshift({
+      id: makeId('prompt'),
+      name: buildImportedPromptName(text, index),
+      text,
+      folderId,
+    });
+    added++;
+  });
+
+  saveData();
+  renderPrompts();
+  closeModal('promptImportModal');
+  showToast(`${added} prompt${added === 1 ? '' : 's'} imported`, 'success');
 }
 
 function movePrompt(id) {
