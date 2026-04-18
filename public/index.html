@@ -176,6 +176,12 @@
     gap: 4px;
   }
   .prompt-folder-item.open .prompt-folder-prompts { display: flex; }
+  .nested-tree {
+    margin-left: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
   .prompt-item {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 8px; padding: 8px 10px;
@@ -235,6 +241,14 @@
     min-height: 52px;
   }
   .folder-item.open .folder-images { display: flex; }
+  .folder-children {
+    display: none;
+    margin-left: 12px;
+    padding: 0 0 6px;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .folder-item.open > .folder-children { display: flex; }
 
   .folder-thumb {
     width: 44px; height: 44px; border-radius: 6px;
@@ -1331,6 +1345,7 @@
   <div class="modal">
     <h3>New Folder</h3>
     <input class="modal-input" id="folderNameInput" placeholder="Folder name…">
+    <select class="modal-input" id="folderParentSelect"></select>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal('folderModal')">Cancel</button>
       <button class="btn-primary" onclick="confirmAddFolder()">Create</button>
@@ -1342,6 +1357,7 @@
   <div class="modal">
     <h3>New Prompt Folder</h3>
     <input class="modal-input" id="promptFolderNameInput" placeholder="Prompt folder name…">
+    <select class="modal-input" id="promptFolderParentSelect"></select>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal('promptFolderModal')">Cancel</button>
       <button class="btn-primary" onclick="confirmAddPromptFolder()">Create</button>
@@ -1663,10 +1679,64 @@ function makeId(prefix = 'id') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function ensurePromptFolderShape() {
-  if (!Array.isArray(promptFolders) || !promptFolders.length) {
-    promptFolders = [{ id: 'pf-general', name: 'General' }];
+function normalizeFolderNodes(list, fallbackId, fallbackName) {
+  const items = Array.isArray(list) ? list.map((item, idx) => ({
+    ...item,
+    id: item.id || makeId(`folder-${idx}`),
+    name: item.name || fallbackName,
+    parentId: item.parentId || null,
+  })) : [];
+
+  if (!items.length) {
+    items.push({ id: fallbackId, name: fallbackName, parentId: null });
   }
+
+  const ids = new Set(items.map(item => item.id));
+  items.forEach(item => {
+    if (item.parentId && !ids.has(item.parentId)) item.parentId = null;
+  });
+
+  return items;
+}
+
+function getChildren(items, parentId = null) {
+  return items.filter(item => String(item.parentId || '') === String(parentId || ''));
+}
+
+function getFolderPath(items, id) {
+  const parts = [];
+  let current = items.find(item => String(item.id) === String(id));
+  while (current) {
+    parts.unshift(current.name);
+    current = current.parentId ? items.find(item => String(item.id) === String(current.parentId)) : null;
+  }
+  return parts.join(' / ');
+}
+
+function buildFolderOptions(items, selectedId = '', includeTopLevel = false, topLevelLabel = 'Top level', parentId = null, depth = 0) {
+  const children = getChildren(items, parentId);
+  const prefix = depth ? `${' '.repeat(depth * 2)}↳ ` : '';
+  let html = '';
+
+  if (depth === 0 && includeTopLevel) {
+    html += `<option value="">${escHtml(topLevelLabel)}</option>`;
+  }
+
+  children.forEach(child => {
+    html += `<option value="${child.id}"${String(child.id) === String(selectedId) ? ' selected' : ''}>${escHtml(prefix + child.name)}</option>`;
+    html += buildFolderOptions(items, selectedId, false, topLevelLabel, child.id, depth + 1);
+  });
+
+  return html;
+}
+
+function ensureReferenceFolderShape() {
+  folders = normalizeFolderNodes(folders, 'rf-general', 'General');
+  folders = folders.map(folder => ({ ...folder, images: Array.isArray(folder.images) ? folder.images : [] }));
+}
+
+function ensurePromptFolderShape() {
+  promptFolders = normalizeFolderNodes(promptFolders, 'pf-general', 'General');
 
   prompts = (Array.isArray(prompts) ? prompts : []).map((p, idx) => {
     const folderId = p.folderId && promptFolders.some(f => f.id === p.folderId)
@@ -1746,7 +1816,6 @@ async function syncFromServer() {
   }
   if (Array.isArray(savedFolders) && JSON.stringify(savedFolders) !== JSON.stringify(folders)) {
     folders = savedFolders;
-    renderFolders();
     changed = true;
   }
   if (Array.isArray(savedHistory) && JSON.stringify(savedHistory) !== JSON.stringify(history)) {
@@ -1758,7 +1827,9 @@ async function syncFromServer() {
 
   if (changed) {
     ensurePromptFolderShape();
+    ensureReferenceFolderShape();
     renderPrompts();
+    renderFolders();
   }
 
   if (changed) showToast('Synced from server', 'success');
@@ -1867,6 +1938,7 @@ async function bootFromServer() {
     ];
     await serverSet('atlasFolders', folders);
   }
+  ensureReferenceFolderShape();
 
   history = Array.isArray(savedHistory) ? savedHistory : [];
   if (!history.length) {
@@ -1935,28 +2007,39 @@ function onApiKeyChange(val) {
 // ============================================================
 function renderPrompts() {
   const el = document.getElementById('promptList');
-  if (!prompts.length) {
+  ensurePromptFolderShape();
+  if (!prompts.length && !promptFolders.length) {
     el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 6px 8px">No saved prompts yet.</div>';
     return;
   }
   const openSet = new Set();
-  promptFolders.forEach((_, idx) => {
-    const existing = document.getElementById(`prompt-folder-${idx}`);
-    if (existing && existing.classList.contains('open')) openSet.add(idx);
+  promptFolders.forEach(folder => {
+    const existing = document.getElementById(`prompt-folder-${folder.id}`);
+    if (existing && existing.classList.contains('open')) openSet.add(folder.id);
   });
 
-  el.innerHTML = promptFolders.map((folder, idx) => {
+  function countPromptsInBranch(folderId) {
+    const direct = prompts.filter(p => p.folderId === folderId).length;
+    const childCount = getChildren(promptFolders, folderId).reduce((sum, child) => sum + countPromptsInBranch(child.id), 0);
+    return direct + childCount;
+  }
+
+  function renderPromptFolderNode(folder, depth = 0) {
     const items = prompts.filter(p => p.folderId === folder.id);
-    const isOpen = openSet.has(idx) || (!openSet.size && idx === 0);
+    const children = getChildren(promptFolders, folder.id);
+    const isOpen = openSet.has(folder.id) || (!openSet.size && depth === 0);
+    const count = countPromptsInBranch(folder.id);
+
     return `
-      <div class="prompt-folder-item${isOpen ? ' open' : ''}" id="prompt-folder-${idx}">
-        <div class="prompt-folder-header" onclick="togglePromptFolder(${idx})">
+      <div class="prompt-folder-item${isOpen ? ' open' : ''}" id="prompt-folder-${folder.id}">
+        <div class="prompt-folder-header" onclick="togglePromptFolder('${folder.id}')">
           <span class="folder-icon">📝</span>
           <span class="prompt-folder-name">${escHtml(folder.name)}</span>
-          <span class="prompt-folder-count">${items.length}</span>
+          <span class="prompt-folder-count">${count}</span>
           <span class="prompt-folder-chevron">▶</span>
         </div>
         <div class="prompt-folder-prompts">
+          ${children.length ? `<div class="nested-tree">${children.map(child => renderPromptFolderNode(child, depth + 1)).join('')}</div>` : ''}
           ${items.length ? items.map(p => `
             <div class="prompt-item" onclick="usePrompt('${p.id}')">
               <div style="flex:1;overflow:hidden">
@@ -1969,20 +2052,23 @@ function renderPrompts() {
                 <button class="icon-btn" onclick="event.stopPropagation();deletePrompt('${p.id}')" title="Delete">✕</button>
               </div>
             </div>
-          `).join('') : '<div style="font-size:11px;color:var(--muted);padding:8px">No prompts in this folder yet.</div>'}
+          `).join('') : ''}
+          ${!children.length && !items.length ? '<div style="font-size:11px;color:var(--muted);padding:8px">No prompts in this folder yet.</div>' : ''}
         </div>
       </div>
     `;
-  }).join('');
+  }
+
+  el.innerHTML = getChildren(promptFolders, null).map(folder => renderPromptFolderNode(folder)).join('');
 }
 
-function buildPromptFolderOptions(selectedId = '') {
+function buildPromptFolderOptions(selectedId = '', includeTopLevel = false) {
   ensurePromptFolderShape();
-  return promptFolders.map(f => `<option value="${f.id}"${String(f.id) === String(selectedId) ? ' selected' : ''}>${escHtml(f.name)}</option>`).join('');
+  return buildFolderOptions(promptFolders, selectedId, includeTopLevel, 'Top level');
 }
 
-function togglePromptFolder(idx) {
-  const el = document.getElementById(`prompt-folder-${idx}`);
+function togglePromptFolder(id) {
+  const el = document.getElementById(`prompt-folder-${id}`);
   if (el) el.classList.toggle('open');
 }
 
@@ -2032,17 +2118,19 @@ function confirmSavePrompt() {
 
 function addPromptFolder() {
   document.getElementById('promptFolderNameInput').value = '';
+  document.getElementById('promptFolderParentSelect').innerHTML = buildPromptFolderOptions('', true);
   document.getElementById('promptFolderModal').classList.add('show');
 }
 
 function confirmAddPromptFolder() {
   const name = document.getElementById('promptFolderNameInput').value.trim();
+  const parentId = document.getElementById('promptFolderParentSelect').value || null;
   if (!name) return;
-  if (promptFolders.some(f => f.name.toLowerCase() === name.toLowerCase())) {
+  if (promptFolders.some(f => String(f.parentId || '') === String(parentId || '') && f.name.toLowerCase() === name.toLowerCase())) {
     showToast('Prompt folder already exists', 'error');
     return;
   }
-  promptFolders.push({ id: makeId('pf'), name });
+  promptFolders.push({ id: makeId('pf'), name, parentId });
   saveData();
   renderPrompts();
   const folderSelect = document.getElementById('promptFolderSelect');
@@ -2163,14 +2251,24 @@ function confirmImportPrompts() {
 function movePrompt(id) {
   const item = prompts.find(p => String(p.id) === String(id));
   if (!item) return;
-  const currentFolder = promptFolders.find(f => f.id === item.folderId)?.name || 'General';
-  const target = prompt(`Move "${item.name}" to folder:`, currentFolder);
+  const currentFolder = getFolderPath(promptFolders, item.folderId) || 'General';
+  const target = prompt(`Move "${item.name}" to folder path:`, currentFolder);
   if (!target || !target.trim()) return;
-  let folder = promptFolders.find(f => f.name.toLowerCase() === target.trim().toLowerCase());
-  if (!folder) {
-    folder = { id: makeId('pf'), name: target.trim() };
-    promptFolders.push(folder);
+
+  const parts = target.split('/').map(x => x.trim()).filter(Boolean);
+  if (!parts.length) return;
+
+  let parentId = null;
+  let folder = null;
+  for (const part of parts) {
+    folder = promptFolders.find(f => String(f.parentId || '') === String(parentId || '') && f.name.toLowerCase() === part.toLowerCase());
+    if (!folder) {
+      folder = { id: makeId('pf'), name: part, parentId };
+      promptFolders.push(folder);
+    }
+    parentId = folder.id;
   }
+
   item.folderId = folder.id;
   saveData();
   renderPrompts();
@@ -2182,39 +2280,47 @@ function movePrompt(id) {
 // ============================================================
 function renderFolders() {
   const el = document.getElementById('folderList');
+  ensureReferenceFolderShape();
   if (!folders.length) {
     el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 6px">No folders yet.</div>';
     return;
   }
   // Remember open state
   const openSet = new Set();
-  folders.forEach((_, fi) => {
-    const existing = document.getElementById(`folder-${fi}`);
-    if (existing && existing.classList.contains('open')) openSet.add(fi);
+  folders.forEach(folder => {
+    const existing = document.getElementById(`folder-${folder.id}`);
+    if (existing && existing.classList.contains('open')) openSet.add(folder.id);
   });
 
-  // Build folder shells WITHOUT any base64 in innerHTML
-  el.innerHTML = folders.map((f, fi) => {
-    const selCount = f.images.filter(img => {
+  function renderFolderNode(folder) {
+    const fi = folders.findIndex(x => x.id === folder.id);
+    const children = getChildren(folders, folder.id);
+    const selCount = folder.images.filter(img => {
       const src = getImageSrc(img);
       return src && refImages.some(r => getRefSrc(r) === src);
     }).length;
-    const isOpen = openSet.has(fi);
+    const isOpen = openSet.has(folder.id);
     return `
-    <div class="folder-item${isOpen ? ' open' : ''}" id="folder-${fi}">
-      <div class="folder-header" onclick="toggleFolder(${fi})">
+    <div class="folder-item${isOpen ? ' open' : ''}" id="folder-${folder.id}">
+      <div class="folder-header" onclick="toggleFolder('${folder.id}')">
         <span class="folder-icon">📁</span>
-        <span class="folder-name">${escHtml(f.name)}</span>
-        <span class="folder-count" id="folder-count-${fi}">${selCount ? selCount + '/' : ''}${f.images.length}</span>
+        <span class="folder-name">${escHtml(folder.name)}</span>
+        <span class="folder-count" id="folder-count-${fi}">${selCount ? selCount + '/' : ''}${folder.images.length}</span>
         <span class="folder-chevron">▶</span>
       </div>
       <div class="folder-images" id="folderImages-${fi}"></div>
-    </div>`
-  }).join('');
+      <div class="folder-children">
+        ${children.map(child => renderFolderNode(child)).join('')}
+      </div>
+    </div>`;
+  }
+
+  el.innerHTML = getChildren(folders, null).map(folder => renderFolderNode(folder)).join('');
 
   // Now populate each folder's image strip using real DOM nodes
   folders.forEach((f, fi) => {
     const imagesEl = document.getElementById(`folderImages-${fi}`);
+    if (!imagesEl) return;
     f.images.forEach((img, ii) => imagesEl.appendChild(buildThumbNode(fi, ii, img)));
     imagesEl.appendChild(makeAddBtn(fi));
   });
@@ -2331,19 +2437,26 @@ function patchThumb(fi, ii) {
   if (countEl) countEl.textContent = `${selCount ? selCount + '/' : ''}${folder.images.length}`;
 }
 
-function toggleFolder(fi) {
-  document.getElementById(`folder-${fi}`).classList.toggle('open');
+function toggleFolder(id) {
+  const el = document.getElementById(`folder-${id}`);
+  if (el) el.classList.toggle('open');
 }
 
 function addFolder() {
   document.getElementById('folderNameInput').value = '';
+  document.getElementById('folderParentSelect').innerHTML = buildFolderOptions(folders, '', true);
   document.getElementById('folderModal').classList.add('show');
 }
 
 function confirmAddFolder() {
   const name = document.getElementById('folderNameInput').value.trim();
+  const parentId = document.getElementById('folderParentSelect').value || null;
   if (!name) return;
-  folders.push({ name, images: [] });
+  if (folders.some(f => String(f.parentId || '') === String(parentId || '') && f.name.toLowerCase() === name.toLowerCase())) {
+    showToast('Folder already exists', 'error');
+    return;
+  }
+  folders.push({ id: makeId('rf'), name, parentId, images: [] });
   saveData();
   renderFolders();
   closeModal('folderModal');
