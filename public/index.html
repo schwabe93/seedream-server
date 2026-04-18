@@ -1579,6 +1579,146 @@ async function copyTextToClipboard(text, successMsg = 'Copied to clipboard') {
   }
 }
 
+let workspaceSaveTimer = null;
+
+function getGuidanceSlider() {
+  return document.querySelector('#imgSettings input[type="range"]');
+}
+
+function currentWorkspaceState() {
+  return {
+    promptText: document.getElementById('promptTextarea')?.value || '',
+    refImages: refImages.map(r => ({ src: getRefSrc(r), dataUrl: r.dataUrl, name: r.name })),
+    currentMode,
+    currentTab,
+    imageModel: document.getElementById('modelSelect')?.value || '',
+    imageSize: document.getElementById('sizeSelect')?.value || '',
+    imageCount: document.getElementById('countSelect')?.value || '1',
+    videoModel: document.getElementById('videoModelSelect')?.value || '',
+    aspectRatio: document.getElementById('aspectSelect')?.value || '16:9',
+    duration: document.getElementById('durationSelect')?.value || '8',
+    guidance: getGuidanceSlider()?.value || '7.5',
+    syncMode: document.getElementById('syncToggle')?.classList.contains('on') || false,
+    pngOutput: document.getElementById('pngToggle')?.classList.contains('on') || false,
+    generateAudio: document.getElementById('audioToggle')?.classList.contains('on') || false,
+    cameraFixed: document.getElementById('cameraFixedToggle')?.classList.contains('on') || false,
+    openPromptFolderIds: [...openPromptFolderIds],
+    openReferenceFolderIds: [...openReferenceFolderIds],
+  };
+}
+
+function scheduleWorkspaceSave() {
+  clearTimeout(workspaceSaveTimer);
+  workspaceSaveTimer = setTimeout(() => {
+    serverSet('atlasWorkspace', currentWorkspaceState());
+  }, 250);
+}
+
+function applyWorkspaceState(state) {
+  if (!state || typeof state !== 'object') return;
+
+  if (typeof state.promptText === 'string') {
+    document.getElementById('promptTextarea').value = state.promptText;
+  }
+
+  refImages = Array.isArray(state.refImages)
+    ? state.refImages
+        .map(item => ({
+          src: item?.src || item?.dataUrl || '',
+          dataUrl: item?.dataUrl || '',
+          name: item?.name || 'Reference',
+        }))
+        .filter(item => getRefSrc(item))
+        .slice(0, 10)
+    : [];
+
+  openPromptFolderIds.clear();
+  if (Array.isArray(state.openPromptFolderIds)) {
+    state.openPromptFolderIds.forEach(id => { if (id) openPromptFolderIds.add(id); });
+  }
+
+  openReferenceFolderIds.clear();
+  if (Array.isArray(state.openReferenceFolderIds)) {
+    state.openReferenceFolderIds.forEach(id => { if (id) openReferenceFolderIds.add(id); });
+  }
+
+  const imageModelEl = document.getElementById('modelSelect');
+  if (state.imageModel && optionExists(imageModelEl, state.imageModel)) imageModelEl.value = state.imageModel;
+
+  const imageSizeEl = document.getElementById('sizeSelect');
+  if (state.imageSize && optionExists(imageSizeEl, state.imageSize)) imageSizeEl.value = state.imageSize;
+
+  const imageCountEl = document.getElementById('countSelect');
+  if (state.imageCount && optionExists(imageCountEl, state.imageCount)) imageCountEl.value = String(state.imageCount);
+
+  const videoModelEl = document.getElementById('videoModelSelect');
+  if (state.videoModel && optionExists(videoModelEl, state.videoModel)) videoModelEl.value = state.videoModel;
+
+  const aspectEl = document.getElementById('aspectSelect');
+  if (state.aspectRatio && optionExists(aspectEl, state.aspectRatio)) aspectEl.value = state.aspectRatio;
+
+  const durationEl = document.getElementById('durationSelect');
+  if (state.duration && optionExists(durationEl, state.duration)) durationEl.value = String(state.duration);
+
+  const guidanceSlider = getGuidanceSlider();
+  if (guidanceSlider && state.guidance) {
+    guidanceSlider.value = String(state.guidance);
+    document.getElementById('guidanceVal').textContent = String(state.guidance);
+  }
+
+  document.getElementById('syncToggle')?.classList.toggle('on', !!state.syncMode);
+  document.getElementById('pngToggle')?.classList.toggle('on', !!state.pngOutput);
+  document.getElementById('audioToggle')?.classList.toggle('on', state.generateAudio !== false);
+  document.getElementById('cameraFixedToggle')?.classList.toggle('on', !!state.cameraFixed);
+
+  const modeBtn = document.getElementById(state.currentMode === 'video' ? 'modeVideoBtn' : 'modeImageBtn');
+  switchMode(state.currentMode === 'video' ? 'video' : 'image', modeBtn);
+
+  renderPrompts();
+  renderFolders();
+  renderRefStrip();
+
+  const tabButtons = document.querySelectorAll('#viewTabs .htab');
+  const targetTab = state.currentTab === 'history' ? 'history' : 'generate';
+  switchTab(targetTab, targetTab === 'history' ? tabButtons[1] : tabButtons[0]);
+}
+
+function setupWorkspaceAutosave() {
+  const watchedSelectors = [
+    '#promptTextarea',
+    '#modelSelect',
+    '#sizeSelect',
+    '#countSelect',
+    '#videoModelSelect',
+    '#aspectSelect',
+    '#durationSelect',
+    '#imgSettings input[type="range"]',
+  ];
+
+  watchedSelectors.forEach(selector => {
+    const el = document.querySelector(selector);
+    if (!el) return;
+    el.addEventListener('input', scheduleWorkspaceSave);
+    el.addEventListener('change', scheduleWorkspaceSave);
+  });
+
+  [
+    'syncToggle',
+    'pngToggle',
+    'audioToggle',
+    'cameraFixedToggle',
+    'modeImageBtn',
+    'modeVideoBtn',
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', () => setTimeout(scheduleWorkspaceSave, 0));
+  });
+
+  document.querySelectorAll('#viewTabs .htab').forEach(el => {
+    el.addEventListener('click', () => setTimeout(scheduleWorkspaceSave, 0));
+  });
+}
+
 async function copyPromptForOutput(outputUrl) {
   const item = findHistoryItemByOutput(outputUrl);
   return copyTextToClipboard(getPromptText(item), 'Prompt copied to clipboard');
@@ -1668,6 +1808,8 @@ let folders   = [];
 let history   = [];
 let refImages = [];
 let currentTab = 'generate';
+const openPromptFolderIds = new Set();
+const openReferenceFolderIds = new Set();
 
 const DEFAULT_IMAGE_SETTINGS = {
   model: 'bytedance/seedream-v4.5/edit',
@@ -1894,7 +2036,7 @@ function restoreOutputGrid() {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 async function bootFromServer() {
-  const [savedKey, savedPrompts, savedPromptFolders, savedFolders, savedHistory, savedAutosave, savedImageDefaults] = await Promise.all([
+  const [savedKey, savedPrompts, savedPromptFolders, savedFolders, savedHistory, savedAutosave, savedImageDefaults, savedWorkspace] = await Promise.all([
     serverGet('atlasApiKey', ''),
     serverGet('atlasPrompts', null),
     serverGet('atlasPromptFolders', null),
@@ -1902,6 +2044,7 @@ async function bootFromServer() {
     serverGet('atlasHistory', []),
     serverGet('atlasAutosave', '0'),
     serverGet('atlasImageDefaults', null),
+    serverGet('atlasWorkspace', null),
   ]);
 
   apiKey = savedKey || '';
@@ -1975,9 +2118,11 @@ async function bootFromServer() {
   }
 
   renderPrompts(); renderFolders(); renderHistory(); renderRefStrip();
+  applyWorkspaceState(savedWorkspace);
   restoreOutputGrid();
   updateSaveFolderUI();
   initSaveFolder();
+  setupWorkspaceAutosave();
 
   // Get current version then start polling
   try {
@@ -2012,11 +2157,10 @@ function renderPrompts() {
     el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 6px 8px">No saved prompts yet.</div>';
     return;
   }
-  const openSet = new Set();
-  promptFolders.forEach(folder => {
-    const existing = document.getElementById(`prompt-folder-${folder.id}`);
-    if (existing && existing.classList.contains('open')) openSet.add(folder.id);
-  });
+  const rootFolders = getChildren(promptFolders, null);
+  if (!openPromptFolderIds.size && rootFolders.length) {
+    openPromptFolderIds.add(rootFolders[0].id);
+  }
 
   function countPromptsInBranch(folderId) {
     const direct = prompts.filter(p => p.folderId === folderId).length;
@@ -2027,7 +2171,7 @@ function renderPrompts() {
   function renderPromptFolderNode(folder, depth = 0) {
     const items = prompts.filter(p => p.folderId === folder.id);
     const children = getChildren(promptFolders, folder.id);
-    const isOpen = openSet.has(folder.id) || (!openSet.size && depth === 0);
+    const isOpen = openPromptFolderIds.has(folder.id);
     const count = countPromptsInBranch(folder.id);
 
     return `
@@ -2059,7 +2203,7 @@ function renderPrompts() {
     `;
   }
 
-  el.innerHTML = getChildren(promptFolders, null).map(folder => renderPromptFolderNode(folder)).join('');
+  el.innerHTML = rootFolders.map(folder => renderPromptFolderNode(folder)).join('');
 }
 
 function buildPromptFolderOptions(selectedId = '', includeTopLevel = false) {
@@ -2068,13 +2212,18 @@ function buildPromptFolderOptions(selectedId = '', includeTopLevel = false) {
 }
 
 function togglePromptFolder(id) {
-  const el = document.getElementById(`prompt-folder-${id}`);
-  if (el) el.classList.toggle('open');
+  if (openPromptFolderIds.has(id)) openPromptFolderIds.delete(id);
+  else openPromptFolderIds.add(id);
+  renderPrompts();
+  scheduleWorkspaceSave();
 }
 
 function usePrompt(id) {
   const prompt = prompts.find(p => String(p.id) === String(id));
-  if (prompt) document.getElementById('promptTextarea').value = prompt.text;
+  if (prompt) {
+    document.getElementById('promptTextarea').value = prompt.text;
+    scheduleWorkspaceSave();
+  }
 }
 
 function deletePrompt(id) {
@@ -2130,7 +2279,10 @@ function confirmAddPromptFolder() {
     showToast('Prompt folder already exists', 'error');
     return;
   }
-  promptFolders.push({ id: makeId('pf'), name, parentId });
+  const newFolder = { id: makeId('pf'), name, parentId };
+  promptFolders.push(newFolder);
+  if (parentId) openPromptFolderIds.add(parentId);
+  openPromptFolderIds.add(newFolder.id);
   saveData();
   renderPrompts();
   const folderSelect = document.getElementById('promptFolderSelect');
@@ -2333,6 +2485,8 @@ function confirmImportPrompts() {
       };
       promptFolders.push(subfolder);
     }
+    if (topLevelFolderId) openPromptFolderIds.add(topLevelFolderId);
+    openPromptFolderIds.add(subfolder.id);
 
     group.prompts.forEach((text, index) => {
       if (prompts.find(p => p.text === text)) return;
@@ -2375,6 +2529,7 @@ function movePrompt(id) {
       folder = { id: makeId('pf'), name: part, parentId };
       promptFolders.push(folder);
     }
+    openPromptFolderIds.add(folder.id);
     parentId = folder.id;
   }
 
@@ -2394,12 +2549,10 @@ function renderFolders() {
     el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 6px">No folders yet.</div>';
     return;
   }
-  // Remember open state
-  const openSet = new Set();
-  folders.forEach(folder => {
-    const existing = document.getElementById(`folder-${folder.id}`);
-    if (existing && existing.classList.contains('open')) openSet.add(folder.id);
-  });
+  const rootFolders = getChildren(folders, null);
+  if (!openReferenceFolderIds.size && rootFolders.length) {
+    openReferenceFolderIds.add(rootFolders[0].id);
+  }
 
   function renderFolderNode(folder) {
     const fi = folders.findIndex(x => x.id === folder.id);
@@ -2408,7 +2561,7 @@ function renderFolders() {
       const src = getImageSrc(img);
       return src && refImages.some(r => getRefSrc(r) === src);
     }).length;
-    const isOpen = openSet.has(folder.id);
+    const isOpen = openReferenceFolderIds.has(folder.id);
     return `
     <div class="folder-item${isOpen ? ' open' : ''}" id="folder-${folder.id}">
       <div class="folder-header" onclick="toggleFolder('${folder.id}')">
@@ -2424,7 +2577,7 @@ function renderFolders() {
     </div>`;
   }
 
-  el.innerHTML = getChildren(folders, null).map(folder => renderFolderNode(folder)).join('');
+  el.innerHTML = rootFolders.map(folder => renderFolderNode(folder)).join('');
 
   // Now populate each folder's image strip using real DOM nodes
   folders.forEach((f, fi) => {
@@ -2547,8 +2700,10 @@ function patchThumb(fi, ii) {
 }
 
 function toggleFolder(id) {
-  const el = document.getElementById(`folder-${id}`);
-  if (el) el.classList.toggle('open');
+  if (openReferenceFolderIds.has(id)) openReferenceFolderIds.delete(id);
+  else openReferenceFolderIds.add(id);
+  renderFolders();
+  scheduleWorkspaceSave();
 }
 
 function addFolder() {
@@ -2565,7 +2720,10 @@ function confirmAddFolder() {
     showToast('Folder already exists', 'error');
     return;
   }
-  folders.push({ id: makeId('rf'), name, parentId, images: [] });
+  const newFolder = { id: makeId('rf'), name, parentId, images: [] };
+  folders.push(newFolder);
+  if (parentId) openReferenceFolderIds.add(parentId);
+  openReferenceFolderIds.add(newFolder.id);
   saveData();
   renderFolders();
   closeModal('folderModal');
@@ -2579,9 +2737,10 @@ async function addImagesToFolder(fi, input, onDone) {
   if (!folder) { showToast('Folder not found', 'error'); if (onDone) onDone(); return; }
 
   const imagesEl = document.getElementById(`folderImages-${fi}`);
-  const folderEl  = document.getElementById(`folder-${fi}`);
+  const folderEl  = document.getElementById(`folder-${folder.id}`);
 
   // Ensure folder is open immediately for feedback
+  openReferenceFolderIds.add(folder.id);
   if (folderEl && !folderEl.classList.contains('open')) folderEl.classList.add('open');
 
   let loaded = 0;
@@ -2635,6 +2794,7 @@ async function deleteImageFromFolder(fi, ii) {
   saveData();
   rebuildFolderImages(fi);
   renderRefStrip();
+  scheduleWorkspaceSave();
 }
 
 function toggleRefImage(fi, ii) {
@@ -2655,6 +2815,7 @@ function toggleRefImage(fi, ii) {
   // Patch only this folder's thumbs in-place — folder stays open
   patchThumb(fi, ii);
   renderRefStrip();
+  scheduleWorkspaceSave();
 }
 
 function renderRefStrip() {
@@ -2742,6 +2903,7 @@ function switchMode(mode, btn) {
     document.getElementById('emptyState').querySelector('.empty-title').textContent = 'Ready to generate video';
     document.getElementById('emptyState').querySelector('.empty-sub').textContent = 'Enter a prompt, choose a Seedance model, and click Generate. For I2V models select a reference image first.';
   }
+  scheduleWorkspaceSave();
 }
 
 // ============================================================
@@ -3170,6 +3332,7 @@ function switchTab(tab, el) {
     promptBar.style.display = 'none';
     refStrip.style.display = 'none';
     renderCenterHistory();
+    scheduleWorkspaceSave();
     return;
   }
 
@@ -3191,6 +3354,7 @@ function switchTab(tab, el) {
     grid.style.display = 'none';
     empty.style.display = 'flex';
   }
+  scheduleWorkspaceSave();
 }
 
 function renderCenterHistory() {
@@ -3385,6 +3549,7 @@ function saveData() {
     { key: 'atlasFolders', value: JSON.stringify(folders) },
     { key: 'atlasHistory', value: JSON.stringify(lightHistory) },
   ]);
+  scheduleWorkspaceSave();
 }
 
 function escHtml(s) {
