@@ -2087,6 +2087,16 @@ async function bootFromServer() {
   }
   ensureReferenceFolderShape();
 
+  if (!savedWorkspace) {
+    const firstPromptRoot = getChildren(promptFolders, null)[0];
+    if (firstPromptRoot) openPromptFolderIds.add(firstPromptRoot.id);
+    promptFolderStateInitialized = true;
+
+    const firstReferenceRoot = getChildren(folders, null)[0];
+    if (firstReferenceRoot) openReferenceFolderIds.add(firstReferenceRoot.id);
+    referenceFolderStateInitialized = true;
+  }
+
   history = Array.isArray(savedHistory) ? savedHistory : [];
   if (!history.length) {
     const files = await fetchSavedOutputs();
@@ -2162,10 +2172,6 @@ function renderPrompts() {
     return;
   }
   const rootFolders = getChildren(promptFolders, null);
-  if (!promptFolderStateInitialized && !openPromptFolderIds.size && rootFolders.length) {
-    openPromptFolderIds.add(rootFolders[0].id);
-    promptFolderStateInitialized = true;
-  }
 
   function countPromptsInBranch(folderId) {
     const direct = prompts.filter(p => p.folderId === folderId).length;
@@ -2428,13 +2434,19 @@ function parseStructuredPromptImport(raw) {
   let buffer = [];
 
   function flushGroup() {
-    const joined = buffer.join('\n').trim();
+    const cleanedLines = buffer
+      .map(line => String(line || '').trim())
+      .filter(Boolean)
+      .filter(line => !/^neue\s+\d+\s+kategorien$/i.test(line));
+    const joined = cleanedLines.join('\n').trim();
     if (!joined) {
       buffer = [];
       return;
     }
 
-    const promptsInGroup = parseImportedPrompts(joined.replace(/^text\s*/i, '').trim());
+    const promptsInGroup = cleanedLines.length > 1
+      ? cleanedLines
+      : parseImportedPrompts(joined.replace(/^text\s*/i, '').trim());
     if (promptsInGroup.length) {
       groups.push({
         category: currentCategory || '',
@@ -2510,8 +2522,26 @@ function confirmImportPrompts() {
 
   let added = 0;
   structuredGroups.forEach(group => {
+    let categoryFolder = null;
+    if (group.category) {
+      categoryFolder = promptFolders.find(f =>
+        String(f.parentId || '') === String(topLevelFolderId || '') &&
+        f.name.toLowerCase() === group.category.toLowerCase()
+      );
+
+      if (!categoryFolder) {
+        categoryFolder = {
+          id: makeId('pf'),
+          name: group.category,
+          parentId: topLevelFolderId || null,
+        };
+        promptFolders.push(categoryFolder);
+      }
+    }
+
+    const targetParentId = categoryFolder?.id || topLevelFolderId || null;
     let subfolder = promptFolders.find(f =>
-      String(f.parentId || '') === String(topLevelFolderId || '') &&
+      String(f.parentId || '') === String(targetParentId || '') &&
       f.name.toLowerCase() === group.folderName.toLowerCase()
     );
 
@@ -2519,11 +2549,12 @@ function confirmImportPrompts() {
       subfolder = {
         id: makeId('pf'),
         name: group.folderName,
-        parentId: topLevelFolderId || null,
+        parentId: targetParentId,
       };
       promptFolders.push(subfolder);
     }
     if (topLevelFolderId) openPromptFolderIds.add(topLevelFolderId);
+    if (categoryFolder) openPromptFolderIds.add(categoryFolder.id);
     openPromptFolderIds.add(subfolder.id);
 
     group.prompts.forEach((text, index) => {
@@ -2588,10 +2619,6 @@ function renderFolders() {
     return;
   }
   const rootFolders = getChildren(folders, null);
-  if (!referenceFolderStateInitialized && !openReferenceFolderIds.size && rootFolders.length) {
-    openReferenceFolderIds.add(rootFolders[0].id);
-    referenceFolderStateInitialized = true;
-  }
 
   function renderFolderNode(folder) {
     const fi = folders.findIndex(x => x.id === folder.id);
