@@ -190,6 +190,12 @@
   }
   .prompt-item:hover { border-color: var(--accent); background: #1d1d2c; }
   .prompt-item.active { border-color: var(--accent); background: #1a1830; }
+  .prompt-select {
+    margin-top: 3px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
   .prompt-text {
     font-size: 11px; color: var(--text); line-height: 1.4;
     flex: 1; overflow: hidden;
@@ -375,6 +381,12 @@
     display: flex; gap: 10px; align-items: flex-end;
   }
 
+  .prompt-input-wrap {
+    flex: 1;
+    position: relative;
+    display: flex;
+  }
+
   .prompt-textarea {
     flex: 1; background: var(--card); border: 1px solid var(--border);
     border-radius: 10px; padding: 10px 14px;
@@ -384,6 +396,16 @@
   }
   .prompt-textarea:focus { border-color: var(--accent); }
   .prompt-textarea::placeholder { color: var(--muted); }
+
+  .prompt-clear-btn {
+    width: 44px; height: 60px; border-radius: 10px;
+    background: var(--card); border: 1px solid var(--border);
+    cursor: pointer; color: var(--muted);
+    font-size: 16px; transition: all 0.2s;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .prompt-clear-btn:hover { border-color: var(--danger); color: var(--danger); }
 
   .generate-btn {
     padding: 0 24px; height: 60px; border-radius: 10px;
@@ -995,6 +1017,11 @@
       height: 52px;
     }
 
+    .prompt-clear-btn {
+      width: 100%;
+      height: 44px;
+    }
+
     .prompt-options {
       gap: 8px;
     }
@@ -1130,7 +1157,10 @@
   <!-- PROMPT BAR -->
   <div class="prompt-bar" id="promptBar">
     <div class="prompt-input-row">
-      <textarea class="prompt-textarea" id="promptTextarea" placeholder="Describe your image…" rows="2"></textarea>
+      <div class="prompt-input-wrap">
+        <textarea class="prompt-textarea" id="promptTextarea" placeholder="Describe your image…" rows="2"></textarea>
+      </div>
+      <button class="prompt-clear-btn" onclick="clearCurrentPrompt()" title="Clear prompt">✕</button>
       <button class="generate-btn" id="generateBtn" onclick="generate()">
         <span id="generateBtnIcon">✦</span>
         <span id="generateBtnText">Generate</span>
@@ -1316,6 +1346,16 @@
   <div id="activeReferenceSection" style="padding:12px 16px 8px;border-bottom:1px solid var(--border)">
     <div class="right-section-title">Active Reference</div>
     <div id="refSummary" style="font-size:11px;color:var(--muted)">No reference images selected.<br>Click a folder image to add as reference.</div>
+  </div>
+
+  <div class="queue-section" id="queueSection">
+    <div class="queue-header">
+      <div class="right-section-title" style="margin:0">Generation Queue <span class="queue-badge" id="queueBadge">0</span></div>
+      <button class="queue-clear-btn" onclick="clearQueue()">Clear</button>
+    </div>
+    <div class="queue-list" id="queueList">
+      <div style="font-size:11px;color:var(--muted);text-align:center;padding:8px 0">Queue is empty.</div>
+    </div>
   </div>
 
   <div id="historySectionHeader" style="padding:12px 16px 8px;border-bottom:1px solid var(--border)">
@@ -1812,6 +1852,8 @@ let refImages = [];
 let currentTab = 'generate';
 const openPromptFolderIds = new Set();
 const openReferenceFolderIds = new Set();
+const selectedPromptIds = new Set();
+let generationQueue = [];
 let promptFolderStateInitialized = false;
 let referenceFolderStateInitialized = false;
 
@@ -2134,6 +2176,8 @@ async function bootFromServer() {
   renderPrompts(); renderFolders(); renderHistory(); renderRefStrip();
   applyWorkspaceState(savedWorkspace);
   restoreOutputGrid();
+  renderQueue();
+  updateGenerateButtonLabel();
   updateSaveFolderUI();
   initSaveFolder();
   setupWorkspaceAutosave();
@@ -2197,7 +2241,8 @@ function renderPrompts() {
         <div class="prompt-folder-prompts">
           ${children.length ? `<div class="nested-tree">${children.map(child => renderPromptFolderNode(child, depth + 1)).join('')}</div>` : ''}
           ${items.length ? items.map(p => `
-            <div class="prompt-item" onclick="usePrompt('${p.id}')">
+            <div class="prompt-item${selectedPromptIds.has(p.id) ? ' active' : ''}" onclick="usePrompt('${p.id}')">
+              <input class="prompt-select" type="checkbox" ${selectedPromptIds.has(p.id) ? 'checked' : ''} onclick="event.stopPropagation()" onchange="togglePromptSelection('${p.id}', this.checked)" title="Queue select">
               <div style="flex:1;overflow:hidden">
                 <div class="prompt-name">${escHtml(p.name)}</div>
                 <div class="prompt-text">${escHtml(p.text)}</div>
@@ -2230,6 +2275,12 @@ function togglePromptFolder(id) {
   scheduleWorkspaceSave();
 }
 
+function togglePromptSelection(id, checked) {
+  if (checked) selectedPromptIds.add(id);
+  else selectedPromptIds.delete(id);
+  renderPrompts();
+}
+
 function usePrompt(id) {
   const prompt = prompts.find(p => String(p.id) === String(id));
   if (prompt) {
@@ -2238,7 +2289,13 @@ function usePrompt(id) {
   }
 }
 
+function clearCurrentPrompt() {
+  document.getElementById('promptTextarea').value = '';
+  scheduleWorkspaceSave();
+}
+
 function deletePrompt(id) {
+  selectedPromptIds.delete(id);
   prompts = prompts.filter(p => String(p.id) !== String(id));
   saveData();
   renderPrompts();
@@ -2266,6 +2323,9 @@ function deletePromptFolder(id) {
 
   if (!confirm(`Prompt-Ordner ${label} wirklich löschen?`)) return;
 
+  prompts
+    .filter(p => branchIds.includes(p.folderId))
+    .forEach(p => selectedPromptIds.delete(p.id));
   prompts = prompts.filter(p => !branchIds.includes(p.folderId));
   promptFolders = promptFolders.filter(f => !branchIds.includes(f.id));
   branchIds.forEach(branchId => openPromptFolderIds.delete(branchId));
@@ -2989,7 +3049,6 @@ function switchMode(mode, btn) {
 // ============================================================
 // QUEUE SYSTEM
 // ============================================================
-let generating = false;
 let activeGenerations = 0;
 const MAX_CONCURRENT_GENERATIONS = 3;
 
@@ -3017,19 +3076,117 @@ function snapshotSettings(mode) {
 }
 
 function updateGenerateButtonLabel() {
-  const label = activeGenerations > 0
-    ? `Running ${activeGenerations}/${MAX_CONCURRENT_GENERATIONS}`
+  const queuedCount = generationQueue.filter(job => job.status === 'queued').length;
+  const label = activeGenerations > 0 || queuedCount > 0
+    ? `Running ${activeGenerations}/${MAX_CONCURRENT_GENERATIONS}${queuedCount ? ` · ${queuedCount} queued` : ''}`
     : 'Generate';
   document.getElementById('generateBtnText').textContent = label;
 }
 
-async function generate() {
+function renderQueue() {
+  const badge = document.getElementById('queueBadge');
+  const list = document.getElementById('queueList');
+  const visibleJobs = generationQueue.slice(0, 30);
+  badge.textContent = String(generationQueue.filter(job => job.status === 'queued' || job.status === 'running').length);
+
+  if (!visibleJobs.length) {
+    list.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:8px 0">Queue is empty.</div>';
+    return;
+  }
+
+  list.innerHTML = visibleJobs.map(job => {
+    const icon = job.status === 'running'
+      ? '<span class="queue-spinner"></span>'
+      : job.status === 'done'
+        ? '<span class="queue-status-icon">✓</span>'
+        : job.status === 'error'
+          ? '<span class="queue-status-icon">✕</span>'
+          : '<span class="queue-status-icon">•</span>';
+    return `
+      <div class="queue-item ${job.status}">
+        ${icon}
+        <div class="queue-item-info">
+          <div class="queue-item-model">${escHtml(job.modelLabel)}</div>
+          <div class="queue-item-prompt">${escHtml(job.prompt)}</div>
+        </div>
+        <button class="queue-item-remove" onclick="removeQueueJob('${job.id}')" title="Remove">✕</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function removeQueueJob(id) {
+  const job = generationQueue.find(item => item.id === id);
+  if (!job || job.status === 'running') return;
+  generationQueue = generationQueue.filter(item => item.id !== id);
+  renderQueue();
+  updateGenerateButtonLabel();
+}
+
+function clearQueue() {
+  generationQueue = generationQueue.filter(job => job.status === 'running');
+  renderQueue();
+  updateGenerateButtonLabel();
+}
+
+function processQueue() {
+  while (activeGenerations < MAX_CONCURRENT_GENERATIONS) {
+    const nextJob = generationQueue.find(job => job.status === 'queued');
+    if (!nextJob) break;
+
+    nextJob.status = 'running';
+    activeGenerations++;
+    renderQueue();
+    updateGenerateButtonLabel();
+
+    (async () => {
+      try {
+        if (nextJob.mode === 'image') await generateImage(nextJob.prompt, nextJob.settings);
+        else await generateVideo(nextJob.prompt, nextJob.settings);
+        nextJob.status = 'done';
+      } catch (err) {
+        nextJob.status = 'error';
+      } finally {
+        activeGenerations = Math.max(0, activeGenerations - 1);
+        renderQueue();
+        updateGenerateButtonLabel();
+        processQueue();
+      }
+    })();
+  }
+}
+
+function enqueueGenerationJobs(promptTexts, mode, settings) {
+  const jobs = promptTexts.map(prompt => ({
+    id: makeId('queue'),
+    prompt,
+    mode,
+    settings: JSON.parse(JSON.stringify(settings)),
+    status: 'queued',
+    modelLabel: mode === 'image'
+      ? (settings.model || 'image').split('/').pop()
+      : (settings.model || 'video').split('/').pop(),
+  }));
+
+  generationQueue.unshift(...jobs);
+  renderQueue();
+  updateGenerateButtonLabel();
+  processQueue();
+  return jobs.length;
+}
+
+function generate() {
   if (!apiKey) { showToast('Please enter your Atlas Cloud API key', 'error'); return; }
-  const prompt = document.getElementById('promptTextarea').value.trim();
-  if (!prompt) { showToast('Please enter a prompt', 'error'); return; }
 
   const mode = currentMode;
   const settings = snapshotSettings(mode);
+  const selectedPrompts = prompts
+    .filter(p => selectedPromptIds.has(p.id))
+    .map(p => p.text.trim())
+    .filter(Boolean);
+  const currentPrompt = document.getElementById('promptTextarea').value.trim();
+  const promptTexts = selectedPrompts.length ? selectedPrompts : (currentPrompt ? [currentPrompt] : []);
+  if (!promptTexts.length) { showToast('Please enter a prompt or select saved prompts', 'error'); return; }
 
   // Validate I2V before queuing
   if (mode === 'video') {
@@ -3040,21 +3197,8 @@ async function generate() {
     }
   }
 
-  if (activeGenerations >= MAX_CONCURRENT_GENERATIONS) {
-    showToast(`Maximum ${MAX_CONCURRENT_GENERATIONS} generations already running`, 'error');
-    return;
-  }
-
-  activeGenerations++;
-  updateGenerateButtonLabel();
-
-  try {
-    if (mode === 'image') await generateImage(prompt, settings);
-    else await generateVideo(prompt, settings);
-  } finally {
-    activeGenerations = Math.max(0, activeGenerations - 1);
-    updateGenerateButtonLabel();
-  }
+  const queued = enqueueGenerationJobs(promptTexts, mode, settings);
+  showToast(`${queued} prompt${queued === 1 ? '' : 's'} added to queue`, 'success');
 }
 
 async function generateImage(prompt, settings) {
@@ -3793,6 +3937,8 @@ function applyImport(data, mode) {
 async function clearAllData() {
   if (!confirm('Delete ALL data — prompts, folders, history, API key? This cannot be undone.')) return;
   prompts = []; promptFolders = []; folders = []; history = []; apiKey = '';
+  selectedPromptIds.clear();
+  generationQueue = [];
   openPromptFolderIds.clear();
   openReferenceFolderIds.clear();
   promptFolderStateInitialized = false;
@@ -3805,6 +3951,7 @@ async function clearAllData() {
   document.getElementById('apiKeyInput').value = '';
   document.getElementById('statusDot').classList.remove('connected');
   renderPrompts(); renderFolders(); renderHistory(); renderRefStrip();
+  renderQueue(); updateGenerateButtonLabel();
   closeModal('dataManagerModal');
   showToast('All data cleared from server.', 'success');
 }
