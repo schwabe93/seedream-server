@@ -638,6 +638,9 @@
     gap: 10px;
     margin: 10px 0 12px;
   }
+  .prompt-reference-builder {
+    margin: 0 0 10px;
+  }
   .prompt-builder-category {
     background: var(--bg);
     border: 1px solid var(--border);
@@ -645,12 +648,33 @@
     padding: 10px;
   }
   .prompt-builder-title {
+    align-items: center;
     color: var(--muted);
+    display: flex;
     font-size: 10px;
     font-weight: 700;
+    gap: 8px;
+    justify-content: space-between;
     letter-spacing: 0.12em;
     margin-bottom: 8px;
     text-transform: uppercase;
+  }
+  .prompt-category-delete {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px;
+  }
+  .prompt-category-delete:hover { color: var(--danger); }
+  .prompt-category-lock {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
   }
   .prompt-chip-list {
     display: flex;
@@ -692,6 +716,12 @@
     gap: 8px;
     grid-template-columns: 130px 1fr auto;
     margin: 10px 0 12px;
+  }
+  .prompt-category-row {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: 1fr auto;
+    margin: 10px 0;
   }
   .btn-primary {
     background: var(--accent); color: #fff; border: none;
@@ -1109,6 +1139,10 @@
     }
 
     .prompt-import-row {
+      grid-template-columns: 1fr;
+    }
+
+    .prompt-category-row {
       grid-template-columns: 1fr;
     }
 
@@ -1644,7 +1678,12 @@
 <div class="modal-overlay" id="promptGeneratorModal">
   <div class="modal" style="width:660px;max-width:calc(100vw - 24px);max-height:92vh;overflow-y:auto">
     <h3>xAI Prompt Generator</h3>
+    <div class="prompt-reference-builder" id="xaiReferenceBuilder"></div>
     <textarea class="modal-textarea" id="xaiPromptIdea" placeholder="Short idea, scene, product, character, mood..." rows="5"></textarea>
+    <div class="prompt-category-row">
+      <input class="modal-input" id="xaiNewCategoryInput" style="margin:0" placeholder="New category name..." onkeydown="if(event.key==='Enter'){event.preventDefault();addXaiPromptCategory()}">
+      <button class="btn-secondary" onclick="addXaiPromptCategory()">Add Category</button>
+    </div>
     <div class="prompt-builder" id="xaiPromptBuilder"></div>
     <div class="prompt-import-row">
       <select class="modal-input" id="xaiImportCategory" style="margin:0"></select>
@@ -2024,6 +2063,12 @@ const DEFAULT_IMAGE_SETTINGS = {
 };
 
 const DEFAULT_XAI_PROMPT_CATEGORIES = [
+  {
+    id: 'reference',
+    name: 'Refernz',
+    locked: true,
+    keywords: ['reference image', 'same character', 'same pose', 'same outfit', 'same location', 'match image style'],
+  },
   {
     id: 'style',
     name: 'Style',
@@ -2411,27 +2456,76 @@ function onXaiTokenChange(val) {
 
 function normalizeXaiPromptCategories(saved) {
   const source = Array.isArray(saved) && saved.length ? saved : DEFAULT_XAI_PROMPT_CATEGORIES;
-  return source.map((cat, idx) => ({
+  const normalized = source.map((cat, idx) => ({
     id: cat.id || makeId(`xai-cat-${idx}`),
     name: cat.name || 'Category',
+    locked: cat.locked === true || cat.id === 'reference',
     keywords: [...new Set((Array.isArray(cat.keywords) ? cat.keywords : [])
       .map(k => String(k || '').trim())
       .filter(Boolean))],
   }));
+  const defaultReference = DEFAULT_XAI_PROMPT_CATEGORIES.find(cat => cat.id === 'reference');
+  const existingReference = normalized.find(cat => cat.id === 'reference');
+  if (existingReference) {
+    existingReference.name = 'Refernz';
+    existingReference.locked = true;
+  } else if (defaultReference) {
+    normalized.unshift({ ...defaultReference, keywords: [...defaultReference.keywords] });
+  }
+  return normalized.sort((a, b) => (a.id === 'reference' ? -1 : b.id === 'reference' ? 1 : 0));
 }
 
 function saveXaiPromptCategories() {
   serverSet('xaiPromptCategories', xaiPromptCategories);
 }
 
+function slugifyXaiCategoryName(name) {
+  const slug = String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || makeId('xai-cat');
+}
+
+function uniqueXaiCategoryId(name) {
+  const base = slugifyXaiCategoryName(name);
+  let id = base;
+  let i = 2;
+  const ids = new Set(xaiPromptCategories.map(cat => cat.id));
+  while (ids.has(id)) {
+    id = `${base}-${i}`;
+    i++;
+  }
+  return id;
+}
+
 function renderXaiPromptBuilder() {
   const builder = document.getElementById('xaiPromptBuilder');
+  const referenceBuilder = document.getElementById('xaiReferenceBuilder');
   const importCategory = document.getElementById('xaiImportCategory');
   if (!builder || !importCategory) return;
+  const referenceCategories = xaiPromptCategories.filter(cat => cat.id === 'reference');
+  const editableCategories = xaiPromptCategories.filter(cat => cat.id !== 'reference');
 
-  builder.innerHTML = xaiPromptCategories.map(cat => `
+  if (referenceBuilder) {
+    referenceBuilder.innerHTML = referenceCategories.map(cat => renderXaiPromptCategory(cat)).join('');
+  }
+
+  builder.innerHTML = editableCategories.map(cat => renderXaiPromptCategory(cat)).join('');
+
+  importCategory.innerHTML = xaiPromptCategories
+    .map(cat => `<option value="${cat.id}">${escHtml(cat.name)}</option>`)
+    .join('');
+}
+
+function renderXaiPromptCategory(cat) {
+  return `
     <div class="prompt-builder-category">
-      <div class="prompt-builder-title">${escHtml(cat.name)}</div>
+      <div class="prompt-builder-title">
+        <span>${escHtml(cat.name)}</span>
+        ${cat.locked ? '<span class="prompt-category-lock">locked</span>' : `<button class="prompt-category-delete" onclick="deleteXaiPromptCategory('${cat.id}')" title="Delete category">×</button>`}
+      </div>
       <div class="prompt-chip-list">
         ${cat.keywords.map(keyword => {
           const key = `${cat.id}:${keyword}`;
@@ -2444,11 +2538,42 @@ function renderXaiPromptBuilder() {
         }).join('')}
       </div>
     </div>
-  `).join('');
+  `;
+}
 
-  importCategory.innerHTML = xaiPromptCategories
-    .map(cat => `<option value="${cat.id}">${escHtml(cat.name)}</option>`)
-    .join('');
+function addXaiPromptCategory() {
+  const input = document.getElementById('xaiNewCategoryInput');
+  const name = input.value.trim();
+  if (!name) { showToast('Enter a category name first', 'error'); return; }
+  if (xaiPromptCategories.some(cat => cat.name.toLowerCase() === name.toLowerCase())) {
+    showToast('Category already exists', 'error');
+    return;
+  }
+
+  const category = { id: uniqueXaiCategoryId(name), name, keywords: [] };
+  xaiPromptCategories.push(category);
+  input.value = '';
+  saveXaiPromptCategories();
+  renderXaiPromptBuilder();
+  const importCategory = document.getElementById('xaiImportCategory');
+  if (importCategory) importCategory.value = category.id;
+  showToast('Category created', 'success');
+}
+
+function deleteXaiPromptCategory(categoryId) {
+  const cat = xaiPromptCategories.find(item => item.id === categoryId);
+  if (!cat) return;
+  if (cat.locked) { showToast('This category cannot be deleted', 'error'); return; }
+  if (!confirm(`Delete category "${cat.name}" and all its keywords?`)) return;
+
+  cat.keywords.forEach(keyword => selectedXaiPromptKeywords.delete(`${cat.id}:${keyword}`));
+  xaiPromptCategories = xaiPromptCategories.filter(item => item.id !== categoryId);
+  if (!xaiPromptCategories.length) {
+    xaiPromptCategories = normalizeXaiPromptCategories(null);
+  }
+  saveXaiPromptCategories();
+  renderXaiPromptBuilder();
+  showToast('Category deleted', 'success');
 }
 
 function escJs(s) {
