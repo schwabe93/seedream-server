@@ -633,6 +633,66 @@
   }
   .modal-textarea:focus { border-color: var(--accent); }
   .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+  .prompt-builder {
+    display: grid;
+    gap: 10px;
+    margin: 10px 0 12px;
+  }
+  .prompt-builder-category {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+  }
+  .prompt-builder-title {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+  .prompt-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .prompt-chip {
+    align-items: center;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text);
+    cursor: pointer;
+    display: inline-flex;
+    font-family: var(--sans);
+    font-size: 11px;
+    gap: 5px;
+    max-width: 100%;
+    padding: 5px 8px;
+    transition: all 0.15s;
+  }
+  .prompt-chip.selected {
+    background: #1a1830;
+    border-color: var(--accent);
+    color: var(--glow);
+  }
+  .prompt-chip-delete {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0 1px;
+  }
+  .prompt-chip-delete:hover { color: var(--danger); }
+  .prompt-import-row {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: 130px 1fr auto;
+    margin: 10px 0 12px;
+  }
   .btn-primary {
     background: var(--accent); color: #fff; border: none;
     border-radius: 8px; padding: 8px 20px; cursor: pointer;
@@ -1046,6 +1106,10 @@
     .prompt-input-row {
       flex-direction: column;
       align-items: stretch;
+    }
+
+    .prompt-import-row {
+      grid-template-columns: 1fr;
     }
 
     .generate-btn {
@@ -1578,9 +1642,15 @@
 
 <!-- XAI PROMPT GENERATOR MODAL -->
 <div class="modal-overlay" id="promptGeneratorModal">
-  <div class="modal" style="width:560px;max-width:calc(100vw - 24px)">
+  <div class="modal" style="width:660px;max-width:calc(100vw - 24px);max-height:92vh;overflow-y:auto">
     <h3>xAI Prompt Generator</h3>
     <textarea class="modal-textarea" id="xaiPromptIdea" placeholder="Short idea, scene, product, character, mood..." rows="5"></textarea>
+    <div class="prompt-builder" id="xaiPromptBuilder"></div>
+    <div class="prompt-import-row">
+      <select class="modal-input" id="xaiImportCategory" style="margin:0"></select>
+      <input class="modal-input" id="xaiImportInput" style="margin:0" placeholder="Import comma-separated keywords..." onkeydown="if(event.key==='Enter'){event.preventDefault();importXaiPromptKeywords()}">
+      <button class="btn-secondary" onclick="importXaiPromptKeywords()">Import</button>
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
       <button class="btn-secondary" onclick="useCurrentPromptAsIdea()">Use current prompt</button>
       <button class="btn-primary" id="xaiPromptGenerateBtn" onclick="generatePromptWithXai()">Generate Prompt</button>
@@ -1932,6 +2002,8 @@ async function prepareJobRefs(refs) {
 // ── Runtime state ──────────────────────────────────────────────────────────
 let apiKey    = '';
 let xaiAuthToken = '';
+let xaiPromptCategories = [];
+const selectedXaiPromptKeywords = new Set();
 let prompts   = [];
 let promptFolders = [];
 let folders   = [];
@@ -1950,6 +2022,29 @@ const DEFAULT_IMAGE_SETTINGS = {
   size: '2048*2048',
   count: 1,
 };
+
+const DEFAULT_XAI_PROMPT_CATEGORIES = [
+  {
+    id: 'style',
+    name: 'Style',
+    keywords: ['cinematic', 'editorial', 'photorealistic', 'analog film', 'minimalist', 'high fashion', 'surreal', 'product photography'],
+  },
+  {
+    id: 'pose',
+    name: 'Pose',
+    keywords: ['standing confidently', 'looking over shoulder', 'dynamic action pose', 'seated relaxed', 'walking toward camera', 'hands in pockets'],
+  },
+  {
+    id: 'environment',
+    name: 'Environment / Ort',
+    keywords: ['urban rooftop', 'neon-lit street', 'modern studio', 'forest clearing', 'luxury apartment', 'desert highway', 'futuristic city', 'coastal cliff'],
+  },
+  {
+    id: 'lighting',
+    name: 'Lighting',
+    keywords: ['golden hour', 'softbox lighting', 'dramatic rim light', 'volumetric light', 'moody low key', 'clean daylight'],
+  },
+];
 
 function makeId(prefix = 'id') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2170,9 +2265,10 @@ function restoreOutputGrid() {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 async function bootFromServer() {
-  const [savedKey, savedXaiToken, savedPrompts, savedPromptFolders, savedFolders, savedHistory, savedAutosave, savedImageDefaults, savedWorkspace] = await Promise.all([
+  const [savedKey, savedXaiToken, savedXaiPromptCategories, savedPrompts, savedPromptFolders, savedFolders, savedHistory, savedAutosave, savedImageDefaults, savedWorkspace] = await Promise.all([
     serverGet('atlasApiKey', ''),
     serverGet('xaiAuthToken', ''),
+    serverGet('xaiPromptCategories', null),
     serverGet('atlasPrompts', null),
     serverGet('atlasPromptFolders', null),
     serverGet('atlasFolders', null),
@@ -2184,6 +2280,7 @@ async function bootFromServer() {
 
   apiKey = savedKey || '';
   xaiAuthToken = savedXaiToken || '';
+  xaiPromptCategories = normalizeXaiPromptCategories(savedXaiPromptCategories);
   document.getElementById('apiKeyInput').value = apiKey;
   const settingsAtlasEl = document.getElementById('settingsAtlasKeyInput');
   const xaiTokenEl = document.getElementById('xaiTokenInput');
@@ -2312,6 +2409,104 @@ function onXaiTokenChange(val) {
   serverSet('xaiAuthToken', xaiAuthToken);
 }
 
+function normalizeXaiPromptCategories(saved) {
+  const source = Array.isArray(saved) && saved.length ? saved : DEFAULT_XAI_PROMPT_CATEGORIES;
+  return source.map((cat, idx) => ({
+    id: cat.id || makeId(`xai-cat-${idx}`),
+    name: cat.name || 'Category',
+    keywords: [...new Set((Array.isArray(cat.keywords) ? cat.keywords : [])
+      .map(k => String(k || '').trim())
+      .filter(Boolean))],
+  }));
+}
+
+function saveXaiPromptCategories() {
+  serverSet('xaiPromptCategories', xaiPromptCategories);
+}
+
+function renderXaiPromptBuilder() {
+  const builder = document.getElementById('xaiPromptBuilder');
+  const importCategory = document.getElementById('xaiImportCategory');
+  if (!builder || !importCategory) return;
+
+  builder.innerHTML = xaiPromptCategories.map(cat => `
+    <div class="prompt-builder-category">
+      <div class="prompt-builder-title">${escHtml(cat.name)}</div>
+      <div class="prompt-chip-list">
+        ${cat.keywords.map(keyword => {
+          const key = `${cat.id}:${keyword}`;
+          return `
+            <button class="prompt-chip${selectedXaiPromptKeywords.has(key) ? ' selected' : ''}" onclick="toggleXaiPromptKeyword('${cat.id}', '${escJs(keyword)}')">
+              <span>${escHtml(keyword)}</span>
+              <span class="prompt-chip-delete" onclick="deleteXaiPromptKeyword(event, '${cat.id}', '${escJs(keyword)}')" title="Delete">×</span>
+            </button>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `).join('');
+
+  importCategory.innerHTML = xaiPromptCategories
+    .map(cat => `<option value="${cat.id}">${escHtml(cat.name)}</option>`)
+    .join('');
+}
+
+function escJs(s) {
+  return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, ' ');
+}
+
+function toggleXaiPromptKeyword(categoryId, keyword) {
+  const key = `${categoryId}:${keyword}`;
+  if (selectedXaiPromptKeywords.has(key)) selectedXaiPromptKeywords.delete(key);
+  else selectedXaiPromptKeywords.add(key);
+  renderXaiPromptBuilder();
+}
+
+function deleteXaiPromptKeyword(event, categoryId, keyword) {
+  event.stopPropagation();
+  const cat = xaiPromptCategories.find(item => item.id === categoryId);
+  if (!cat) return;
+  cat.keywords = cat.keywords.filter(item => item !== keyword);
+  selectedXaiPromptKeywords.delete(`${categoryId}:${keyword}`);
+  saveXaiPromptCategories();
+  renderXaiPromptBuilder();
+}
+
+function importXaiPromptKeywords() {
+  const categoryId = document.getElementById('xaiImportCategory').value;
+  const input = document.getElementById('xaiImportInput');
+  const cat = xaiPromptCategories.find(item => item.id === categoryId);
+  if (!cat) return;
+  const keywords = input.value
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+  if (!keywords.length) { showToast('Enter comma-separated keywords first', 'error'); return; }
+
+  let added = 0;
+  const existing = new Set(cat.keywords.map(item => item.toLowerCase()));
+  for (const keyword of keywords) {
+    if (existing.has(keyword.toLowerCase())) continue;
+    cat.keywords.push(keyword);
+    existing.add(keyword.toLowerCase());
+    added++;
+  }
+
+  input.value = '';
+  saveXaiPromptCategories();
+  renderXaiPromptBuilder();
+  showToast(`${added} keyword${added === 1 ? '' : 's'} imported`, added ? 'success' : 'error');
+}
+
+function getSelectedXaiPromptContext() {
+  const grouped = [];
+  for (const cat of xaiPromptCategories) {
+    const selected = cat.keywords.filter(keyword => selectedXaiPromptKeywords.has(`${cat.id}:${keyword}`));
+    if (selected.length) grouped.push(`${cat.name}: ${selected.join(', ')}`);
+  }
+  return grouped.join('; ');
+}
+
 function toggleStudioMenu() {
   document.body.classList.toggle('menu-open');
 }
@@ -2332,6 +2527,7 @@ function openPromptGeneratorModal() {
   document.getElementById('promptGeneratorModal').classList.add('show');
   const idea = document.getElementById('xaiPromptIdea');
   if (idea && !idea.value.trim()) idea.value = document.getElementById('promptTextarea').value.trim();
+  renderXaiPromptBuilder();
 }
 
 function useCurrentPromptAsIdea() {
@@ -2350,8 +2546,12 @@ async function generatePromptWithXai() {
   const resultEl = document.getElementById('xaiPromptResult');
   const btn = document.getElementById('xaiPromptGenerateBtn');
   const idea = ideaEl.value.trim();
+  const selectedContext = getSelectedXaiPromptContext();
+  const enrichedIdea = [idea, selectedContext ? `Selected details: ${selectedContext}` : '']
+    .filter(Boolean)
+    .join('\n');
   if (!xaiAuthToken) { showToast('Add your xAI auth token in Settings first', 'error'); return; }
-  if (!idea) { showToast('Enter an idea first', 'error'); return; }
+  if (!enrichedIdea) { showToast('Enter an idea or select keywords first', 'error'); return; }
 
   try {
     btn.disabled = true;
@@ -2359,7 +2559,7 @@ async function generatePromptWithXai() {
     const resp = await fetch(`${SERVER}/api/xai/prompt`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ idea, mode: currentMode, targetModel: currentTargetModelLabel() }),
+      body: JSON.stringify({ idea: enrichedIdea, mode: currentMode, targetModel: currentTargetModelLabel() }),
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
@@ -4114,6 +4314,8 @@ function applyImport(data, mode) {
 async function clearAllData() {
   if (!confirm('Delete ALL data — prompts, folders, history, API key? This cannot be undone.')) return;
   prompts = []; promptFolders = []; folders = []; history = []; apiKey = ''; xaiAuthToken = '';
+  xaiPromptCategories = normalizeXaiPromptCategories(null);
+  selectedXaiPromptKeywords.clear();
   selectedPromptIds.clear();
   generationQueue = [];
   openPromptFolderIds.clear();
@@ -4121,7 +4323,7 @@ async function clearAllData() {
   promptFolderStateInitialized = false;
   referenceFolderStateInitialized = false;
   await Promise.all([
-    serverDel('atlasApiKey'), serverDel('xaiAuthToken'), serverDel('atlasPrompts'),
+    serverDel('atlasApiKey'), serverDel('xaiAuthToken'), serverDel('xaiPromptCategories'), serverDel('atlasPrompts'),
     serverDel('atlasPromptFolders'),
     serverDel('atlasFolders'), serverDel('atlasHistory'),
   ]);
