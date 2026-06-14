@@ -136,6 +136,23 @@ function httpCall(method, fullUrl, headers = {}, body = '') {
   });
 }
 
+function parseXaiResponse(text) {
+  const data = JSON.parse(text || '{}');
+  if (typeof data.output_text === 'string' && data.output_text.trim()) return data.output_text.trim();
+  if (Array.isArray(data.output)) {
+    for (const item of data.output) {
+      if (!Array.isArray(item.content)) continue;
+      for (const part of item.content) {
+        if (typeof part.text === 'string' && part.text.trim()) return part.text.trim();
+      }
+    }
+  }
+  if (Array.isArray(data.choices) && data.choices[0]?.message?.content) {
+    return String(data.choices[0].message.content).trim();
+  }
+  return '';
+}
+
 async function atlasDeletePrediction(predictionId, apiKey) {
   if (!predictionId || !apiKey) return { ok: false, tried: [] };
   const id = encodeURIComponent(predictionId);
@@ -228,6 +245,59 @@ const server = http.createServer(async (req, res) => {
     delete store[key];
     persistStore();
     return jsonResp(res, 200, { ok: true, key });
+  }
+
+  // Generate a polished image/video prompt with xAI.
+  // POST /api/xai/prompt { idea, mode, targetModel, token? }
+  if (pathname === '/api/xai/prompt' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const { idea, mode, targetModel, token } = JSON.parse(body || '{}');
+      const xaiToken = String(token || readJsonStore('xaiAuthToken', '') || '').trim();
+      const seed = String(idea || '').trim();
+      if (!xaiToken) return jsonResp(res, 400, { error: 'Missing xAI auth token' });
+      if (!seed) return jsonResp(res, 400, { error: 'Missing prompt idea' });
+
+      const kind = mode === 'video' ? 'video' : 'image';
+      const payload = JSON.stringify({
+        model: 'grok-4.3',
+        input: [
+          {
+            role: 'system',
+            content: [
+              'You write production-ready prompts for generative image and video models.',
+              'Return only one final prompt, no markdown, no bullets, no explanation.',
+              'Make it vivid, specific, visual, and usable as-is.',
+              kind === 'video'
+                ? 'Include camera movement, subject motion, pacing, lighting, and scene continuity.'
+                : 'Include subject, composition, lighting, lens/style, material detail, and mood.',
+            ].join(' '),
+          },
+          {
+            role: 'user',
+            content: `Create a ${kind} generation prompt for model "${targetModel || 'default'}" from this idea: ${seed}`,
+          },
+        ],
+      });
+
+      const xaiResp = await httpCall('POST', 'https://api.x.ai/v1/responses', {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${xaiToken}`,
+      }, payload);
+
+      let prompt = '';
+      try { prompt = parseXaiResponse(xaiResp.body); } catch {}
+      if (!xaiResp.ok || !prompt) {
+        return jsonResp(res, xaiResp.ok ? 502 : xaiResp.status || 502, {
+          error: prompt ? 'xAI request failed' : 'xAI response did not contain prompt text',
+          status: xaiResp.status,
+          details: xaiResp.body?.slice(0, 1000) || '',
+        });
+      }
+      return jsonResp(res, 200, { ok: true, prompt });
+    } catch (e) {
+      return jsonResp(res, 400, { error: e.message });
+    }
   }
 
   if (pathname === '/api/store-bulk' && req.method === 'POST') {

@@ -33,7 +33,7 @@
     font-family: var(--sans);
     min-height: 100vh;
     display: grid;
-    grid-template-columns: 280px 1fr 320px;
+    grid-template-columns: 1fr;
     grid-template-rows: 56px 1fr;
     overflow: hidden;
     height: 100vh;
@@ -50,6 +50,34 @@
     gap: 16px;
     z-index: 10;
   }
+
+  .topbar-btn {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 7px 12px;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .topbar-btn:hover { border-color: var(--glow); color: var(--glow); }
+  header .api-key-input,
+  header .data-manager-btn {
+    display: none;
+  }
+  .menu-backdrop {
+    position: fixed;
+    inset: 56px 0 0;
+    background: #00000088;
+    backdrop-filter: blur(3px);
+    z-index: 80;
+    display: none;
+  }
+  body.menu-open .menu-backdrop { display: block; }
 
   .logo {
     display: flex;
@@ -100,15 +128,29 @@
 
   /* LEFT PANEL */
   .left-panel {
-    grid-row: 2;
+    position: fixed;
+    top: 56px;
+    left: 0;
+    bottom: 0;
+    width: 320px;
     background: var(--surface);
     border-right: 1px solid var(--border);
     display: flex; flex-direction: column;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    z-index: 90;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
   }
+  body.menu-open .left-panel { transform: translateX(0); }
 
   .panel-section {
     border-bottom: 1px solid var(--border);
+  }
+  .left-panel > .panel-section {
+    flex: 0 0 auto !important;
+    overflow: visible !important;
   }
   .panel-section-header {
     padding: 12px 16px 10px;
@@ -133,6 +175,8 @@
     padding: 0 10px 10px;
     display: flex; flex-direction: column; gap: 4px;
     overflow: visible;
+    flex: none;
+    min-height: 0;
   }
   .prompt-folder-item {
     background: var(--card);
@@ -219,6 +263,7 @@
     padding: 0 10px 10px;
     display: flex; flex-direction: column; gap: 4px;
     flex: none; overflow: visible;
+    min-height: 0;
   }
   .folder-item {
     background: var(--card); border: 1px solid var(--border);
@@ -436,6 +481,14 @@
   }
   .select-styled:focus { border-color: var(--accent); }
 
+  #sizeSelect,
+  #countSelect,
+  #aspectSelect,
+  #durationSelect,
+  #promptBar .save-prompt-btn {
+    display: none !important;
+  }
+
   .save-prompt-btn {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 8px; padding: 5px 12px;
@@ -464,12 +517,20 @@
 
   /* RIGHT PANEL */
   .right-panel {
-    grid-row: 2;
+    position: fixed;
+    top: 56px;
+    left: 320px;
+    bottom: 0;
+    width: 340px;
     background: var(--surface);
     border-left: 1px solid var(--border);
     display: flex; flex-direction: column;
     overflow: hidden;
+    z-index: 90;
+    transform: translateX(-660px);
+    transition: transform 0.2s ease;
   }
+  body.menu-open .right-panel { transform: translateX(0); }
 
   .right-section {
     padding: 16px; border-bottom: 1px solid var(--border);
@@ -933,42 +994,45 @@
       max-width: 100%;
     }
 
-    .api-key-input {
-      width: 100%;
-      order: 10;
-    }
+    .api-key-input { width: 100%; }
 
     .left-panel,
     .right-panel {
-      grid-row: auto;
-      width: 100%;
-      overflow: visible;
-      border: none;
+      top: 56px;
+      bottom: auto;
+      width: min(100vw, 420px);
+      max-height: calc(50vh - 28px);
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
 
     .center-panel {
-      display: contents;
+      grid-row: 2;
+      display: flex;
     }
 
     .left-panel {
-      order: 4;
-      border-top: 1px solid var(--border);
+      left: 0;
+      transform: translateX(-100%);
     }
 
     .right-panel {
-      order: 2;
+      left: 0;
+      top: calc(56px + min(50vh - 28px, 420px));
+      transform: translateX(-100%);
+      border-left: none;
       border-top: 1px solid var(--border);
-      display: contents;
     }
 
+    body.menu-open .left-panel,
+    body.menu-open .right-panel { transform: translateX(0); }
+
     .generate-area {
-      order: 4;
       padding: 14px;
       min-height: 44vh;
     }
 
     #refStrip {
-      order: 1;
       padding: 0 12px 8px !important;
     }
 
@@ -977,34 +1041,7 @@
       gap: 10px;
     }
 
-    .prompt-bar {
-      order: 1;
-      padding: 12px;
-    }
-
-    #generationSettingsSection {
-      order: 2;
-    }
-
-    #autosaveSection {
-      order: 2;
-    }
-
-    #activeReferenceSection {
-      order: 2;
-    }
-
-    .left-panel {
-      order: 3;
-    }
-
-    #historySectionHeader {
-      order: 5;
-    }
-
-    #historyList {
-      order: 6;
-    }
+    .prompt-bar { padding: 12px; }
 
     .prompt-input-row {
       flex-direction: column;
@@ -1090,11 +1127,12 @@
     <div class="logo-icon">✦</div>
     Seedream Studio
   </div>
+  <button class="topbar-btn" onclick="toggleStudioMenu()">Menu</button>
   <div class="header-tabs">
     <button class="htab active" id="modeImageBtn" onclick="switchMode('image',this)">🖼 Image</button>
     <button class="htab" id="modeVideoBtn" onclick="switchMode('video',this)">🎬 Video</button>
   </div>
-  <div class="header-tabs" id="viewTabs" style="margin-left:4px">
+  <div class="header-tabs" id="viewTabs" style="margin-left:4px;display:none">
     <button class="htab active" onclick="switchTab('generate',this)">Generate</button>
     <button class="htab" onclick="switchTab('history',this)">History</button>
   </div>
@@ -1108,6 +1146,8 @@
   <a class="data-manager-btn" href="/gallery" style="text-decoration:none">🖼 Gallery</a>
   <button class="data-manager-btn" onclick="openDataManager()">⬡ Data Manager</button>
 </header>
+
+<div class="menu-backdrop" onclick="closeStudioMenu()"></div>
 
 <!-- LEFT PANEL: Prompts + Folders -->
 <aside class="left-panel">
@@ -1274,6 +1314,15 @@
 
 <!-- RIGHT PANEL -->
 <aside class="right-panel">
+  <div class="right-section">
+    <div class="right-section-title">Studio Menu</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <button class="save-folder-btn" onclick="openPromptGeneratorModal()">xAI Prompt</button>
+      <button class="save-folder-btn" onclick="openSettingsModal()">Settings</button>
+      <a class="save-folder-btn" href="/gallery" style="text-align:center;text-decoration:none">Gallery</a>
+      <button class="save-folder-btn clear" onclick="openDataManager()">Data Manager</button>
+    </div>
+  </div>
   <div class="right-section" id="generationSettingsSection">
     <div class="right-section-title">Generation Settings</div>
 
@@ -1503,6 +1552,44 @@
   </div>
   <div class="error-log-list" id="errorLogList">
     <div style="font-size:11px;color:var(--muted);text-align:center;padding:16px">No errors logged.</div>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal" style="width:520px;max-width:calc(100vw - 24px)">
+    <h3>Settings</h3>
+    <label style="display:block;font-size:11px;color:var(--muted);margin-bottom:6px">Atlas Cloud API Key</label>
+    <input class="modal-input" id="settingsAtlasKeyInput" type="password" placeholder="Atlas Cloud API Key..." oninput="onSettingsAtlasKeyChange(this.value)">
+    <label style="display:block;font-size:11px;color:var(--muted);margin:12px 0 6px">xAI Auth Token</label>
+    <input class="modal-input" id="xaiTokenInput" type="password" placeholder="xAI token..." oninput="onXaiTokenChange(this.value)">
+    <div style="font-size:11px;color:var(--muted);line-height:1.5;margin:2px 0 14px">
+      Used for the local xAI prompt generator via the server endpoint.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+      <a class="btn-secondary" href="/gallery" style="text-align:center;text-decoration:none">Open Gallery</a>
+      <button class="btn-secondary" onclick="openDataManager()">Data Manager</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('settingsModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- XAI PROMPT GENERATOR MODAL -->
+<div class="modal-overlay" id="promptGeneratorModal">
+  <div class="modal" style="width:560px;max-width:calc(100vw - 24px)">
+    <h3>xAI Prompt Generator</h3>
+    <textarea class="modal-textarea" id="xaiPromptIdea" placeholder="Short idea, scene, product, character, mood..." rows="5"></textarea>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <button class="btn-secondary" onclick="useCurrentPromptAsIdea()">Use current prompt</button>
+      <button class="btn-primary" id="xaiPromptGenerateBtn" onclick="generatePromptWithXai()">Generate Prompt</button>
+    </div>
+    <textarea class="modal-textarea" id="xaiPromptResult" placeholder="Generated prompt appears here..." rows="7"></textarea>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('promptGeneratorModal')">Cancel</button>
+      <button class="btn-primary" onclick="applyXaiPrompt()">Use Prompt</button>
+    </div>
   </div>
 </div>
 
@@ -1844,6 +1931,7 @@ async function prepareJobRefs(refs) {
 
 // ── Runtime state ──────────────────────────────────────────────────────────
 let apiKey    = '';
+let xaiAuthToken = '';
 let prompts   = [];
 let promptFolders = [];
 let folders   = [];
@@ -2082,8 +2170,9 @@ function restoreOutputGrid() {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 async function bootFromServer() {
-  const [savedKey, savedPrompts, savedPromptFolders, savedFolders, savedHistory, savedAutosave, savedImageDefaults, savedWorkspace] = await Promise.all([
+  const [savedKey, savedXaiToken, savedPrompts, savedPromptFolders, savedFolders, savedHistory, savedAutosave, savedImageDefaults, savedWorkspace] = await Promise.all([
     serverGet('atlasApiKey', ''),
+    serverGet('xaiAuthToken', ''),
     serverGet('atlasPrompts', null),
     serverGet('atlasPromptFolders', null),
     serverGet('atlasFolders', null),
@@ -2094,7 +2183,12 @@ async function bootFromServer() {
   ]);
 
   apiKey = savedKey || '';
+  xaiAuthToken = savedXaiToken || '';
   document.getElementById('apiKeyInput').value = apiKey;
+  const settingsAtlasEl = document.getElementById('settingsAtlasKeyInput');
+  const xaiTokenEl = document.getElementById('xaiTokenInput');
+  if (settingsAtlasEl) settingsAtlasEl.value = apiKey;
+  if (xaiTokenEl) xaiTokenEl.value = xaiAuthToken;
   if (apiKey) document.getElementById('statusDot').classList.add('connected');
 
   if (Array.isArray(savedPrompts)) {
@@ -2203,6 +2297,89 @@ function onApiKeyChange(val) {
   apiKey = val.trim();
   serverSet('atlasApiKey', apiKey);
   document.getElementById('statusDot').classList.toggle('connected', apiKey.length > 10);
+  const settingsAtlasEl = document.getElementById('settingsAtlasKeyInput');
+  if (settingsAtlasEl && settingsAtlasEl.value !== apiKey) settingsAtlasEl.value = apiKey;
+}
+
+function onSettingsAtlasKeyChange(val) {
+  const hidden = document.getElementById('apiKeyInput');
+  if (hidden) hidden.value = val;
+  onApiKeyChange(val);
+}
+
+function onXaiTokenChange(val) {
+  xaiAuthToken = val.trim();
+  serverSet('xaiAuthToken', xaiAuthToken);
+}
+
+function toggleStudioMenu() {
+  document.body.classList.toggle('menu-open');
+}
+
+function closeStudioMenu() {
+  document.body.classList.remove('menu-open');
+}
+
+function openSettingsModal() {
+  const settingsAtlasEl = document.getElementById('settingsAtlasKeyInput');
+  const xaiTokenEl = document.getElementById('xaiTokenInput');
+  if (settingsAtlasEl) settingsAtlasEl.value = apiKey;
+  if (xaiTokenEl) xaiTokenEl.value = xaiAuthToken;
+  document.getElementById('settingsModal').classList.add('show');
+}
+
+function openPromptGeneratorModal() {
+  document.getElementById('promptGeneratorModal').classList.add('show');
+  const idea = document.getElementById('xaiPromptIdea');
+  if (idea && !idea.value.trim()) idea.value = document.getElementById('promptTextarea').value.trim();
+}
+
+function useCurrentPromptAsIdea() {
+  document.getElementById('xaiPromptIdea').value = document.getElementById('promptTextarea').value.trim();
+}
+
+function currentTargetModelLabel() {
+  const el = currentMode === 'video'
+    ? document.getElementById('videoModelSelect')
+    : document.getElementById('modelSelect');
+  return el?.value || '';
+}
+
+async function generatePromptWithXai() {
+  const ideaEl = document.getElementById('xaiPromptIdea');
+  const resultEl = document.getElementById('xaiPromptResult');
+  const btn = document.getElementById('xaiPromptGenerateBtn');
+  const idea = ideaEl.value.trim();
+  if (!xaiAuthToken) { showToast('Add your xAI auth token in Settings first', 'error'); return; }
+  if (!idea) { showToast('Enter an idea first', 'error'); return; }
+
+  try {
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    const resp = await fetch(`${SERVER}/api/xai/prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idea, mode: currentMode, targetModel: currentTargetModelLabel() }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    resultEl.value = data.prompt || '';
+    showToast('Prompt generated', 'success');
+  } catch (e) {
+    showToast('xAI prompt failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate Prompt';
+  }
+}
+
+function applyXaiPrompt() {
+  const prompt = document.getElementById('xaiPromptResult').value.trim();
+  if (!prompt) { showToast('Generate a prompt first', 'error'); return; }
+  document.getElementById('promptTextarea').value = prompt;
+  scheduleWorkspaceSave();
+  closeModal('promptGeneratorModal');
+  showToast('Prompt inserted', 'success');
 }
 
 // ============================================================
@@ -3936,7 +4113,7 @@ function applyImport(data, mode) {
 
 async function clearAllData() {
   if (!confirm('Delete ALL data — prompts, folders, history, API key? This cannot be undone.')) return;
-  prompts = []; promptFolders = []; folders = []; history = []; apiKey = '';
+  prompts = []; promptFolders = []; folders = []; history = []; apiKey = ''; xaiAuthToken = '';
   selectedPromptIds.clear();
   generationQueue = [];
   openPromptFolderIds.clear();
@@ -3944,11 +4121,15 @@ async function clearAllData() {
   promptFolderStateInitialized = false;
   referenceFolderStateInitialized = false;
   await Promise.all([
-    serverDel('atlasApiKey'), serverDel('atlasPrompts'),
+    serverDel('atlasApiKey'), serverDel('xaiAuthToken'), serverDel('atlasPrompts'),
     serverDel('atlasPromptFolders'),
     serverDel('atlasFolders'), serverDel('atlasHistory'),
   ]);
   document.getElementById('apiKeyInput').value = '';
+  const settingsAtlasEl = document.getElementById('settingsAtlasKeyInput');
+  const xaiTokenEl = document.getElementById('xaiTokenInput');
+  if (settingsAtlasEl) settingsAtlasEl.value = '';
+  if (xaiTokenEl) xaiTokenEl.value = '';
   document.getElementById('statusDot').classList.remove('connected');
   renderPrompts(); renderFolders(); renderHistory(); renderRefStrip();
   renderQueue(); updateGenerateButtonLabel();
