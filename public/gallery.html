@@ -123,6 +123,31 @@
       return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
+    let promptByOutput = new Map();
+
+    function normalizeOutputUrl(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      try {
+        return new URL(raw, window.location.origin).pathname;
+      } catch {
+        return raw;
+      }
+    }
+
+    function outputBasename(value) {
+      const normalized = normalizeOutputUrl(value);
+      return normalized.split('/').pop() || '';
+    }
+
+    function addPromptMapping(map, outputUrl, prompt) {
+      if (!outputUrl || !prompt) return;
+      const normalized = normalizeOutputUrl(outputUrl);
+      const basename = outputBasename(outputUrl);
+      if (normalized) map.set(normalized, prompt);
+      if (basename) map.set(basename, prompt);
+    }
+
     function openImage(src) {
       const box = document.getElementById('lightbox');
       const img = document.getElementById('lightboxImg');
@@ -190,6 +215,11 @@
       }
     }
 
+    async function copyPromptForUrl(outputUrl) {
+      const prompt = promptByOutput.get(normalizeOutputUrl(outputUrl)) || promptByOutput.get(outputBasename(outputUrl)) || '';
+      await copyPrompt(prompt);
+    }
+
     async function fetchHistoryMap() {
       try {
         const r = await fetch('/api/store/atlasHistory');
@@ -200,9 +230,9 @@
         const map = new Map();
         (Array.isArray(items) ? items : []).forEach(item => {
           const prompt = getPromptText(item);
-          if (item.thumb) map.set(item.thumb, prompt);
-          if (item.videoUrl) map.set(item.videoUrl, prompt);
-          (Array.isArray(item.outputs) ? item.outputs : []).forEach(u => map.set(u, prompt));
+          addPromptMapping(map, item.thumb, prompt);
+          addPromptMapping(map, item.videoUrl, prompt);
+          (Array.isArray(item.outputs) ? item.outputs : []).forEach(u => addPromptMapping(map, u, prompt));
         });
         return map;
       } catch {
@@ -237,7 +267,7 @@
           const name = f.name || '';
           const url = '/outputs/' + name;
           const isVideo = /\.(mp4|webm)$/i.test(name);
-          const prompt = promptMap.get(url) || '';
+          promptByOutput = promptMap;
           const card = document.createElement('div');
           card.className = 'card';
 
@@ -247,7 +277,7 @@
               <div class="info">
                 <span class="name" title="${esc(name)}">${esc(name)}</span>
                 <div style="display:flex;gap:6px">
-                  <button class="btn" style="padding:4px 8px" onclick="copyPrompt(${JSON.stringify(prompt)})">Prompt</button>
+                  <button class="btn copy-prompt-btn" style="padding:4px 8px">Prompt</button>
                   <button class="btn" style="padding:4px 8px" onclick="download('${url}','${esc(name)}')">Save</button>
                   <button class="btn" style="padding:4px 8px;border-color:#ef444466;color:#ef4444" onclick="deleteOutput('${esc(name)}', this)">Delete</button>
                 </div>
@@ -258,12 +288,14 @@
               <div class="info">
                 <span class="name" title="${esc(name)}">${esc(name)}</span>
                 <div style="display:flex;gap:6px">
-                  <button class="btn" style="padding:4px 8px" onclick="copyPrompt(${JSON.stringify(prompt)})">Prompt</button>
+                  <button class="btn copy-prompt-btn" style="padding:4px 8px">Prompt</button>
                   <button class="btn" style="padding:4px 8px" onclick="download('${url}','${esc(name)}')">Save</button>
                   <button class="btn" style="padding:4px 8px;border-color:#ef444466;color:#ef4444" onclick="deleteOutput('${esc(name)}', this)">Delete</button>
                 </div>
               </div>`;
           }
+          const copyBtn = card.querySelector('.copy-prompt-btn');
+          if (copyBtn) copyBtn.addEventListener('click', () => copyPromptForUrl(url));
           grid.appendChild(card);
         });
       } catch (e) {

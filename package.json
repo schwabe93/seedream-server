@@ -4,8 +4,13 @@
   "description": "Local network server for Seedream Studio",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "smoke": "node scripts/smoke-playwright.js",
+    "smoke:install": "npx playwright install chromium"
   },
   "dependencies": {},
+  "devDependencies": {
+    "@playwright/test": "^1.53.0"
+  },
   "engines": { "node": ">=18.0.0" }
 }
