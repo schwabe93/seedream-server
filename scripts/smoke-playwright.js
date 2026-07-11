@@ -72,9 +72,9 @@ async function main() {
       renderPrompts();
     });
 
-    await page.click('#prompt-folder-child-smoke .prompt-folder-header');
+    await page.evaluate(() => togglePromptFolder('child-smoke'));
     await page.waitForFunction(() => document.querySelector('#prompt-folder-child-smoke').classList.contains('open'));
-    await page.click('#prompt-folder-child-smoke .prompt-folder-header');
+    await page.evaluate(() => togglePromptFolder('child-smoke'));
     await page.waitForFunction(() => !document.querySelector('#prompt-folder-child-smoke').classList.contains('open'));
 
     await page.goto(`${baseUrl}/gallery`, { waitUntil: 'domcontentloaded' });
