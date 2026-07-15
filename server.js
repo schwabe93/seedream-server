@@ -10,7 +10,10 @@ const path  = require('path');
 const url   = require('url');
 
 const PORT        = process.env.PORT || 7842;
-const DATA_DIR    = path.join(__dirname, 'data');
+const INSTANCE_TOKEN = process.env.SEEDREAM_INSTANCE_TOKEN || '';
+const DATA_DIR    = process.env.SEEDREAM_DATA_DIR
+  ? path.resolve(process.env.SEEDREAM_DATA_DIR)
+  : path.join(__dirname, 'data');
 const DB_FILE     = path.join(DATA_DIR, 'store.json');
 const OUTPUT_DIR  = path.join(DATA_DIR, 'outputs');
 const REFS_DIR    = path.join(DATA_DIR, 'refs');
@@ -385,7 +388,7 @@ const server = http.createServer(async (req, res) => {
   // ── Health ───────────────────────────────────────────────────────────────
   if (pathname === '/api/health') {
     const outputFiles = fs.readdirSync(OUTPUT_DIR).length;
-    return jsonResp(res, 200, { ok: true, keys: Object.keys(store).length, outputs: outputFiles, uptime: process.uptime() });
+    return jsonResp(res, 200, { ok: true, keys: Object.keys(store).length, outputs: outputFiles, uptime: process.uptime(), instanceToken: INSTANCE_TOKEN });
   }
 
   if (pathname === '/api/outputs' && req.method === 'GET') {
