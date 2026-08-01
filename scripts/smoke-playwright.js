@@ -383,6 +383,33 @@ async function main() {
     }));
     assert(rebuiltReferenceCounts.wrappers === rebuiltReferenceCounts.thumbs && rebuiltReferenceCounts.thumbs === rebuiltReferenceCounts.deleteButtons, `Reference rebuild left orphan controls: ${JSON.stringify(rebuiltReferenceCounts)}`);
 
+    const folderGroupButtonMetrics = await page.locator('#folder-refs-smoke .folder-group-create').evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return { width: rect.width, height: rect.height, text: element.textContent };
+    });
+    assert(folderGroupButtonMetrics.width >= 44 && folderGroupButtonMetrics.height >= 44, `Folder group action is too small: ${JSON.stringify(folderGroupButtonMetrics)}`);
+    assert(folderGroupButtonMetrics.text.includes('choose 10'), `Large folder does not offer image selection: ${JSON.stringify(folderGroupButtonMetrics)}`);
+    await page.click('#folder-refs-smoke .folder-group-create');
+    await page.waitForFunction(() => document.querySelector('#folderReferenceGroupModal')?.classList.contains('show'));
+    assert((await page.textContent('#folderReferenceGroupStatus')).includes('10/10 selected from 17'), 'Folder picker does not report its 10-image limit');
+    assert(await page.locator('.folder-group-picker-item').count() === 17, 'Folder picker does not show every available reference image');
+    assert(await page.locator('.folder-group-picker-item.selected').count() === 10, 'Folder picker did not preselect the first 10 images');
+    await page.screenshot({ path: path.join(evidenceDir, 'mobile-folder-group-picker-375.png'), fullPage: false });
+    await page.locator('.folder-group-picker-item').first().click();
+    await page.locator('.folder-group-picker-item').nth(10).click();
+    assert(await page.locator('.folder-group-picker-item.selected').count() === 10, 'Folder picker did not allow replacing one of the first 10 images');
+    await page.fill('#folderReferenceGroupNameInput', 'Folder Ten');
+    await page.click('#confirmFolderReferenceGroupButton');
+    await page.waitForFunction(() => !document.querySelector('#folderReferenceGroupModal')?.classList.contains('show'));
+    await page.waitForFunction(async () => {
+      const response = await fetch('/api/store/atlasReferenceGroups');
+      if (!response.ok) return false;
+      const data = await response.json();
+      const groups = JSON.parse(data.value || '[]');
+      return groups.some(group => group.name === 'Folder Ten' && group.images?.length === 10);
+    });
+    assert(await page.evaluate(() => refImages.length === 0), 'Saving a folder group unexpectedly changed active references');
+
     await page.focus('#folder-refs-smoke .folder-thumb[data-ii="0"]');
     await page.keyboard.press('Enter');
     await page.click('#folder-refs-smoke .folder-thumb[data-ii="1"]');
@@ -426,7 +453,8 @@ async function main() {
       const groups = JSON.parse(data.value || '[]');
       return groups.some(group => group.name === 'Smoke Duo' && group.images?.length === 2);
     });
-    const groupMetrics = await page.locator('.reference-group-card').evaluate(card => {
+    const smokeDuoCard = page.locator('.reference-group-card').filter({ hasText: 'Smoke Duo' });
+    const groupMetrics = await smokeDuoCard.evaluate(card => {
       const apply = card.querySelector('.reference-group-apply').getBoundingClientRect();
       const remove = card.querySelector('.reference-group-delete').getBoundingClientRect();
       return { applyHeight: apply.height, deleteWidth: remove.width, deleteHeight: remove.height };
@@ -434,13 +462,13 @@ async function main() {
     assert(groupMetrics.applyHeight >= 44 && groupMetrics.deleteWidth >= 44 && groupMetrics.deleteHeight >= 44, `Reference group mobile targets are too small: ${JSON.stringify(groupMetrics)}`);
     await page.evaluate(() => clearRefs());
     assert(await page.evaluate(() => refImages.length === 0), 'Reference group fixture could not clear active references');
-    await page.click('.reference-group-apply');
+    await smokeDuoCard.locator('.reference-group-apply').click();
     assert(await page.evaluate(() => refImages.length === 2), 'One-click reference group did not restore all images');
-    assert(await page.locator('.reference-group-card').evaluate(card => card.classList.contains('active')), 'Applied reference group has no active state');
-    assert(await page.evaluate(() => buildExportPayload('folders').referenceGroups?.[0]?.name === 'Smoke Duo'), 'Reference groups are missing from folder backups');
+    assert(await smokeDuoCard.evaluate(card => card.classList.contains('active')), 'Applied reference group has no active state');
+    assert(await page.evaluate(() => buildExportPayload('folders').referenceGroups?.some(group => group.name === 'Smoke Duo')), 'Reference groups are missing from folder backups');
     const groupCountBeforeDelete = await page.locator('.reference-group-card').count();
     page.once('dialog', dialog => dialog.dismiss());
-    await page.click('.reference-group-delete');
+    await smokeDuoCard.locator('.reference-group-delete').click();
     assert(await page.locator('.reference-group-card').count() === groupCountBeforeDelete, 'Dismissed reference group deletion still removed the group');
     await page.screenshot({ path: path.join(evidenceDir, 'mobile-reference-groups-375.png'), fullPage: false });
 
