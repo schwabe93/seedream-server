@@ -13,6 +13,8 @@
       --accent: #6d28d9;
       --text: #e8e8f0;
       --muted: #8b8ba8;
+      --danger: #ef4444;
+      --success: #10b981;
     }
     * { box-sizing: border-box; }
     body {
@@ -47,6 +49,14 @@
       font-size: 13px;
     }
     .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+    .copy-prompt-btn.copied {
+      border-color: var(--success);
+      color: var(--success);
+    }
     .meta { color: var(--muted); font-size: 12px; padding: 10px 16px; }
     .grid {
       padding: 0 16px 20px;
@@ -77,6 +87,12 @@
       justify-content: space-between;
       gap: 8px;
     }
+    .card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: flex-end;
+    }
     .name {
       overflow: hidden;
       text-overflow: ellipsis;
@@ -100,6 +116,56 @@
     }
     .lightbox.show { display: flex; }
     .lightbox img, .lightbox video { max-width: 92vw; max-height: 92vh; border-radius: 10px; }
+    .copy-fallback {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: #000000cc;
+    }
+    .copy-fallback.show { display: flex; }
+    .copy-fallback-card {
+      width: min(560px, 100%);
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--card);
+    }
+    .copy-fallback-card h2 { margin: 0 0 8px; font-size: 16px; }
+    .copy-fallback-card p { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .copy-fallback-card textarea {
+      width: 100%;
+      min-height: 160px;
+      padding: 10px;
+      resize: vertical;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.5 Arial, sans-serif;
+    }
+    .copy-fallback-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    @media (max-width: 560px) {
+      header { flex-wrap: wrap; }
+      .grid { grid-template-columns: 1fr; padding-inline: 10px; }
+      .info { align-items: flex-start; flex-direction: column; }
+      .card-actions { justify-content: flex-start; width: 100%; }
+      .card-actions .btn { min-height: 44px; }
+    }
   </style>
 </head>
 <body>
@@ -118,9 +184,26 @@
     <video id="lightboxVideo" controls style="display:none" onclick="event.stopPropagation()"></video>
   </div>
 
+  <div class="copy-fallback" id="copyFallback" role="dialog" aria-modal="true" aria-labelledby="copyFallbackTitle" onclick="if(event.target===this)closeCopyFallback()">
+    <div class="copy-fallback-card">
+      <h2 id="copyFallbackTitle">Copy prompt manually</h2>
+      <p>Automatic clipboard access is blocked on this HTTP connection. The prompt is selected below; long-press it and choose Copy.</p>
+      <textarea id="copyFallbackText" readonly></textarea>
+      <div class="copy-fallback-actions">
+        <button class="btn primary" onclick="closeCopyFallback()">Close</button>
+      </div>
+    </div>
+  </div>
+  <div class="sr-only" id="copyStatus" aria-live="polite"></div>
+
   <script>
     function esc(s) {
-      return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return String(s || '')
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#39;');
     }
 
     let promptByOutput = new Map();
@@ -129,23 +212,18 @@
       const raw = String(value || '').trim();
       if (!raw) return '';
       try {
-        return new URL(raw, window.location.origin).pathname;
+        const parsed = new URL(raw, window.location.origin);
+        if (parsed.origin !== window.location.origin || !parsed.pathname.startsWith('/outputs/')) return '';
+        return parsed.pathname;
       } catch {
-        return raw;
+        return '';
       }
-    }
-
-    function outputBasename(value) {
-      const normalized = normalizeOutputUrl(value);
-      return normalized.split('/').pop() || '';
     }
 
     function addPromptMapping(map, outputUrl, prompt) {
       if (!outputUrl || !prompt) return;
       const normalized = normalizeOutputUrl(outputUrl);
-      const basename = outputBasename(outputUrl);
       if (normalized) map.set(normalized, prompt);
-      if (basename) map.set(basename, prompt);
     }
 
     function openImage(src) {
@@ -184,40 +262,81 @@
     }
 
     function getPromptText(entry) {
-      return String(entry?.promptFull || entry?.prompt || '').trim();
+      const prompt = String(entry?.promptFull || entry?.prompt || '').trim();
+      if (entry?.promptUnavailable || (entry?.model === 'Recovered' && prompt === 'Recovered from server output')) return '';
+      return prompt;
     }
 
-    async function copyPrompt(text) {
-      const value = String(text || '').trim();
-      if (!value) {
-        alert('No prompt stored for this item.');
-        return;
+    function showCopySuccess(button) {
+      if (!button) return;
+      const original = button.dataset.label || button.textContent;
+      button.dataset.label = original;
+      button.textContent = 'Copied';
+      button.classList.add('copied');
+      document.getElementById('copyStatus').textContent = 'Prompt copied to clipboard';
+      window.setTimeout(() => {
+        button.textContent = original;
+        button.classList.remove('copied');
+      }, 1600);
+    }
+
+    function openCopyFallback(value) {
+      const overlay = document.getElementById('copyFallback');
+      const textarea = document.getElementById('copyFallbackText');
+      textarea.value = value;
+      overlay.classList.add('show');
+      window.setTimeout(() => {
+        textarea.focus({ preventScroll: true });
+        textarea.select();
+        textarea.setSelectionRange(0, value.length);
+      }, 0);
+    }
+
+    function closeCopyFallback() {
+      document.getElementById('copyFallback').classList.remove('show');
+    }
+
+    function copyWithSelection(value) {
+      const ta = document.createElement('textarea');
+      ta.value = value;
+      ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.left = '0';
+      ta.style.width = '1px';
+      ta.style.height = '1px';
+      ta.style.opacity = '0.01';
+      ta.style.fontSize = '16px';
+      document.body.appendChild(ta);
+      try {
+        ta.focus({ preventScroll: true });
+        ta.select();
+        ta.setSelectionRange(0, value.length);
+        return document.execCommand('copy');
+      } finally {
+        ta.remove();
       }
+    }
+
+    async function copyPrompt(text, button) {
+      const value = String(text || '').trim();
+      if (!value) return false;
       try {
         if (navigator.clipboard && window.isSecureContext) {
           await navigator.clipboard.writeText(value);
         } else {
-          const ta = document.createElement('textarea');
-          ta.value = value;
-          ta.setAttribute('readonly', '');
-          ta.style.position = 'fixed';
-          ta.style.top = '-9999px';
-          ta.style.left = '-9999px';
-          document.body.appendChild(ta);
-          ta.focus();
-          ta.select();
-          const ok = document.execCommand('copy');
-          document.body.removeChild(ta);
-          if (!ok) throw new Error('execCommand copy failed');
+          if (!copyWithSelection(value)) throw new Error('execCommand copy failed');
         }
+        showCopySuccess(button);
+        return true;
       } catch (e) {
-        alert('Clipboard copy failed.');
+        openCopyFallback(value);
+        return false;
       }
     }
 
-    async function copyPromptForUrl(outputUrl) {
-      const prompt = promptByOutput.get(normalizeOutputUrl(outputUrl)) || promptByOutput.get(outputBasename(outputUrl)) || '';
-      await copyPrompt(prompt);
+    async function copyPromptForUrl(outputUrl, button) {
+      const prompt = promptByOutput.get(normalizeOutputUrl(outputUrl)) || '';
+      await copyPrompt(prompt, button);
     }
 
     async function fetchHistoryMap() {
@@ -256,6 +375,8 @@
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const data = await r.json();
         const files = Array.isArray(data.files) ? data.files : [];
+        files.forEach(file => addPromptMapping(promptMap, `/outputs/${encodeURIComponent(file.name || '')}`, file.prompt));
+        promptByOutput = promptMap;
         meta.textContent = files.length + ' output' + (files.length === 1 ? '' : 's');
 
         if (!files.length) {
@@ -265,37 +386,45 @@
 
         files.forEach(f => {
           const name = f.name || '';
-          const url = '/outputs/' + name;
+          const url = '/outputs/' + encodeURIComponent(name);
           const isVideo = /\.(mp4|webm)$/i.test(name);
-          promptByOutput = promptMap;
+          const hasPrompt = Boolean(promptByOutput.get(normalizeOutputUrl(url)));
+          const copyState = hasPrompt
+            ? 'title="Copy prompt" aria-label="Copy prompt"'
+            : 'disabled title="No prompt was stored for this older output" aria-label="No prompt stored"';
           const card = document.createElement('div');
           card.className = 'card';
 
           if (isVideo) {
             card.innerHTML = `
-              <video src="${url}" controls playsinline preload="metadata"></video>
+              <video src="${esc(url)}" controls playsinline preload="metadata"></video>
               <div class="info">
                 <span class="name" title="${esc(name)}">${esc(name)}</span>
-                <div style="display:flex;gap:6px">
-                  <button class="btn copy-prompt-btn" style="padding:4px 8px">Prompt</button>
-                  <button class="btn" style="padding:4px 8px" onclick="download('${url}','${esc(name)}')">Save</button>
-                  <button class="btn" style="padding:4px 8px;border-color:#ef444466;color:#ef4444" onclick="deleteOutput('${esc(name)}', this)">Delete</button>
+                <div class="card-actions">
+                  <button class="btn copy-prompt-btn" style="padding:4px 8px" ${copyState}>${hasPrompt ? 'Copy prompt' : 'No prompt'}</button>
+                  <button class="btn save-output-btn" style="padding:4px 8px">Save</button>
+                  <button class="btn delete-output-btn" style="padding:4px 8px;border-color:#ef444466;color:#ef4444">Delete</button>
                 </div>
               </div>`;
           } else {
             card.innerHTML = `
-              <img src="${url}" alt="${esc(name)}" loading="lazy" onclick="openImage('${url}')">
+              <img src="${esc(url)}" alt="${esc(name)}" loading="lazy">
               <div class="info">
                 <span class="name" title="${esc(name)}">${esc(name)}</span>
-                <div style="display:flex;gap:6px">
-                  <button class="btn copy-prompt-btn" style="padding:4px 8px">Prompt</button>
-                  <button class="btn" style="padding:4px 8px" onclick="download('${url}','${esc(name)}')">Save</button>
-                  <button class="btn" style="padding:4px 8px;border-color:#ef444466;color:#ef4444" onclick="deleteOutput('${esc(name)}', this)">Delete</button>
+                <div class="card-actions">
+                  <button class="btn copy-prompt-btn" style="padding:4px 8px" ${copyState}>${hasPrompt ? 'Copy prompt' : 'No prompt'}</button>
+                  <button class="btn save-output-btn" style="padding:4px 8px">Save</button>
+                  <button class="btn delete-output-btn" style="padding:4px 8px;border-color:#ef444466;color:#ef4444">Delete</button>
                 </div>
               </div>`;
           }
           const copyBtn = card.querySelector('.copy-prompt-btn');
-          if (copyBtn) copyBtn.addEventListener('click', () => copyPromptForUrl(url));
+          if (copyBtn && hasPrompt) copyBtn.addEventListener('click', () => copyPromptForUrl(url, copyBtn));
+          const preview = card.querySelector('img');
+          if (preview) preview.addEventListener('click', () => openImage(url));
+          card.querySelector('.save-output-btn')?.addEventListener('click', () => download(url, name));
+          const deleteBtn = card.querySelector('.delete-output-btn');
+          deleteBtn?.addEventListener('click', () => deleteOutput(name, deleteBtn));
           grid.appendChild(card);
         });
       } catch (e) {
@@ -321,6 +450,12 @@
         btn.disabled = false;
       }
     }
+
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      if (document.getElementById('copyFallback').classList.contains('show')) closeCopyFallback();
+      else if (document.getElementById('lightbox').classList.contains('show')) closeLightbox();
+    });
 
     loadGallery();
   </script>

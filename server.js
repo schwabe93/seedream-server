@@ -5,6 +5,7 @@
 
 const http  = require('http');
 const https = require('https');
+const crypto = require('crypto');
 const fs    = require('fs');
 const path  = require('path');
 const url   = require('url');
@@ -21,6 +22,8 @@ const REFS_DIR    = path.join(DATA_DIR, 'refs');
 fs.mkdirSync(DATA_DIR,   { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(REFS_DIR,   { recursive: true });
+
+const outputSaveLocks = new Map();
 
 // ── JSON key-value store ──────────────────────────────────────────────────────
 let store = {};
@@ -100,6 +103,8 @@ const EXT_BY_CONTENT_TYPE = {
   'image/gif':  '.gif',
 };
 
+const OUTPUT_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.webm']);
+
 function makeSafeFilename(baseName, fallbackExt = '.jpg') {
   const parsed = path.parse(baseName || '');
   const base = (parsed.name || 'ref').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'ref';
@@ -121,6 +126,35 @@ function readJsonStore(key, fallback) {
 function writeJsonStore(key, value) {
   store[key] = { value: JSON.stringify(value), updated_at: Date.now() };
   persistStore();
+}
+
+function outputFilename(value) {
+  try {
+    const pathname = url.parse(String(value || '')).pathname || '';
+    return path.basename(decodeURIComponent(pathname));
+  } catch {
+    return '';
+  }
+}
+
+function localOutputFilename(value) {
+  try {
+    const parsed = url.parse(String(value || ''));
+    if (parsed.protocol || parsed.host) return '';
+    const pathname = decodeURIComponent(parsed.pathname || '');
+    if (!pathname.startsWith('/outputs/')) return '';
+    const filename = pathname.slice('/outputs/'.length);
+    if (!filename || filename.includes('/') || filename.includes('\\')) return '';
+    return path.basename(filename);
+  } catch {
+    return '';
+  }
+}
+
+function historyPromptText(item) {
+  const prompt = String(item?.promptFull || item?.prompt || '').trim();
+  if (item?.promptUnavailable || (item?.model === 'Recovered' && prompt === 'Recovered from server output')) return '';
+  return prompt;
 }
 
 function httpCall(method, fullUrl, headers = {}, body = '') {
@@ -186,7 +220,8 @@ function serveFile(res, filePath) {
     res.writeHead(200, {
       'Content-Type':   MIME[ext] || 'application/octet-stream',
       'Content-Length': stat.size,
-      'Cache-Control':  'public, max-age=31536000',
+      'Cache-Control':  ext === '.html' ? 'no-cache' : 'public, max-age=31536000',
+      'X-Content-Type-Options': 'nosniff',
     });
     fs.createReadStream(filePath).pipe(res);
   } catch { res.writeHead(404); res.end('Not found'); }
@@ -195,13 +230,52 @@ function serveFile(res, filePath) {
 // ── Download a URL and save to disk ──────────────────────────────────────────
 function downloadToFile(fileUrl, destPath) {
   return new Promise((resolve, reject) => {
-    const proto = fileUrl.startsWith('https') ? https : http;
-    const file  = fs.createWriteStream(destPath);
-    proto.get(fileUrl, (r) => {
-      if (r.statusCode !== 200) { reject(new Error('HTTP ' + r.statusCode)); return; }
-      r.pipe(file);
-      file.on('finish', () => { file.close(); resolve(); });
-    }).on('error', (e) => { fs.unlink(destPath, () => {}); reject(e); });
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(fileUrl);
+    } catch {
+      reject(new Error('Invalid output URL'));
+      return;
+    }
+
+    const proto = parsedUrl.protocol === 'https:' ? https : parsedUrl.protocol === 'http:' ? http : null;
+    if (!proto) {
+      reject(new Error('Output URL must use HTTP or HTTPS'));
+      return;
+    }
+
+    const tempPath = `${destPath}.part-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+    const file = fs.createWriteStream(tempPath);
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      file.destroy();
+      fs.unlink(tempPath, () => reject(error));
+    };
+
+    file.on('error', fail);
+    const request = proto.get(parsedUrl, (response) => {
+      if (response.statusCode !== 200) {
+        response.resume();
+        fail(new Error('HTTP ' + response.statusCode));
+        return;
+      }
+      response.on('error', fail);
+      response.pipe(file);
+      file.on('finish', () => {
+        file.close((closeError) => {
+          if (closeError) return fail(closeError);
+          fs.rename(tempPath, destPath, (renameError) => {
+            if (renameError) return fail(renameError);
+            settled = true;
+            resolve();
+          });
+        });
+      });
+    });
+    request.on('error', fail);
+    request.setTimeout(300000, () => request.destroy(new Error('Output download timed out')));
   });
 }
 
@@ -323,18 +397,54 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/save-output' && req.method === 'POST') {
     try {
       const body            = await readBody(req);
-      const { url: fileUrl, filename } = JSON.parse(body);
+      const { url: fileUrl, filename, prompt } = JSON.parse(body);
       if (!fileUrl || !filename) return jsonResp(res, 400, { error: 'Missing url or filename' });
 
-      // Sanitise filename
-      const safe    = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      // Sanitise filename and only accept formats the Gallery can render.
+      const safe = String(filename).replace(/[^a-zA-Z0-9._-]/g, '_');
+      if (!OUTPUT_EXTENSIONS.has(path.extname(safe).toLowerCase())) {
+        return jsonResp(res, 400, { error: 'Unsupported output file type' });
+      }
       const dest    = path.join(OUTPUT_DIR, safe);
       const localUrl = `/outputs/${safe}`;
 
-      // If already saved, just return
-      if (fs.existsSync(dest)) return jsonResp(res, 200, { ok: true, localUrl });
+      const promptText = String(prompt || '').trim();
+      if (promptText.length > 50000) {
+        return jsonResp(res, 413, { error: 'Prompt is too large' });
+      }
 
-      await downloadToFile(fileUrl, dest);
+      const persistOutputPrompt = () => {
+        if (!promptText) return;
+        const savedPrompts = readJsonStore('atlasOutputPrompts', {});
+        const outputPrompts = savedPrompts && typeof savedPrompts === 'object' && !Array.isArray(savedPrompts)
+          ? savedPrompts
+          : {};
+        if (!Object.hasOwn(outputPrompts, safe)) {
+          outputPrompts[safe] = promptText;
+          writeJsonStore('atlasOutputPrompts', outputPrompts);
+        }
+      };
+
+      const activeSave = outputSaveLocks.get(safe);
+      if (activeSave) {
+        await activeSave;
+        return jsonResp(res, 200, { ok: true, localUrl });
+      }
+
+      // If already saved, just return
+      if (fs.existsSync(dest)) {
+        persistOutputPrompt();
+        return jsonResp(res, 200, { ok: true, localUrl });
+      }
+
+      const download = downloadToFile(fileUrl, dest);
+      outputSaveLocks.set(safe, download);
+      try {
+        await download;
+      } finally {
+        if (outputSaveLocks.get(safe) === download) outputSaveLocks.delete(safe);
+      }
+      persistOutputPrompt();
       console.log('Saved output:', safe);
       return jsonResp(res, 200, { ok: true, localUrl });
     } catch (e) {
@@ -376,7 +486,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── Serve saved output files ─────────────────────────────────────────────
   if (pathname.startsWith('/outputs/')) {
-    const filename = path.basename(pathname); // prevent directory traversal
+    const filename = outputFilename(pathname); // prevent directory traversal
     return serveFile(res, path.join(OUTPUT_DIR, filename));
   }
 
@@ -393,11 +503,32 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/outputs' && req.method === 'GET') {
     try {
+      const savedPrompts = readJsonStore('atlasOutputPrompts', {});
+      const outputPrompts = savedPrompts && typeof savedPrompts === 'object' && !Array.isArray(savedPrompts)
+        ? { ...savedPrompts }
+        : {};
+      const history = readJsonStore('atlasHistory', []);
+      if (Array.isArray(history)) {
+        for (const item of history) {
+          const prompt = historyPromptText(item);
+          if (!prompt) continue;
+          const candidates = [
+            item?.thumb,
+            item?.videoUrl,
+            ...(Array.isArray(item?.outputs) ? item.outputs : []),
+          ];
+          for (const candidate of candidates) {
+            const name = localOutputFilename(candidate);
+            if (name && !outputPrompts[name]) outputPrompts[name] = prompt;
+          }
+        }
+      }
+
       const files = fs.readdirSync(OUTPUT_DIR)
         .map(name => {
           const full = path.join(OUTPUT_DIR, name);
           const stat = fs.statSync(full);
-          return { name, mtime: stat.mtimeMs };
+          return { name, mtime: stat.mtimeMs, prompt: String(outputPrompts[name] || '') };
         })
         .filter(f => /\.(png|jpe?g|webp|gif|mp4|webm)$/i.test(f.name))
         .sort((a, b) => b.mtime - a.mtime);
@@ -411,9 +542,8 @@ const server = http.createServer(async (req, res) => {
   // Attempts Atlas deletion when prediction IDs are present in history.
   // DELETE /api/output/<filename>
   if (pathname.startsWith('/api/output/') && req.method === 'DELETE') {
-    const filename = path.basename(pathname.slice('/api/output/'.length));
+    const filename = outputFilename(pathname.slice('/api/output/'.length));
     if (!filename) return jsonResp(res, 400, { error: 'Missing filename' });
-    const targetUrl = `/outputs/${filename}`;
     const filePath = path.join(OUTPUT_DIR, filename);
 
     let localDeleted = false;
@@ -426,6 +556,14 @@ const server = http.createServer(async (req, res) => {
       return jsonResp(res, 500, { error: e.message });
     }
 
+    let promptMetadataDeleted = false;
+    const savedPrompts = readJsonStore('atlasOutputPrompts', {});
+    if (savedPrompts && typeof savedPrompts === 'object' && !Array.isArray(savedPrompts) && Object.hasOwn(savedPrompts, filename)) {
+      delete savedPrompts[filename];
+      writeJsonStore('atlasOutputPrompts', savedPrompts);
+      promptMetadataDeleted = true;
+    }
+
     const history = readJsonStore('atlasHistory', []);
     const touchedPredictions = new Set();
     let changed = false;
@@ -436,15 +574,15 @@ const server = http.createServer(async (req, res) => {
       for (const item of history) {
         const outputs = Array.isArray(item.outputs) ? item.outputs.slice() : [];
         const beforeLen = outputs.length;
-        const filtered = outputs.filter(u => u !== targetUrl);
+        const filtered = outputs.filter(u => localOutputFilename(u) !== filename);
         if (filtered.length !== beforeLen) {
           changed = true;
           removedRefs += (beforeLen - filtered.length);
           if (item.predictionId) touchedPredictions.add(item.predictionId);
         }
 
-        const thumbWasDeleted = item.thumb === targetUrl;
-        const videoWasDeleted = item.videoUrl === targetUrl;
+        const thumbWasDeleted = localOutputFilename(item.thumb) === filename;
+        const videoWasDeleted = localOutputFilename(item.videoUrl) === filename;
 
         if (!filtered.length && (thumbWasDeleted || videoWasDeleted || beforeLen > 0)) {
           changed = true;
@@ -476,6 +614,7 @@ const server = http.createServer(async (req, res) => {
     return jsonResp(res, 200, {
       ok: true,
       localDeleted,
+      promptMetadataDeleted,
       historyRefsRemoved: removedRefs,
       atlasAttempted,
       atlasDeleted,

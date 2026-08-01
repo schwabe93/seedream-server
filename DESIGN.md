@@ -96,6 +96,26 @@ All spacing uses a 4px base unit.
 - **States**: loading, ready, error.
 - **Accessibility**: media has descriptive alt text and actions have labels.
 
+### xAI Quick Action
+
+- **Structure**: persistent compact header action opening the existing xAI Prompt Generator.
+- **States**: default, hover/focus, generator dialog open.
+- **Accessibility**: exposes a dialog relationship and keeps a 44px mobile target.
+- **Behavior**: carries the current generation prompt into the generator and focuses the idea field.
+
+### Prompt Keyword Editor
+
+- **Structure**: category-level `Edit keywords` mode with separate keyword selection and delete buttons.
+- **States**: browsing, editing, selected keyword, empty category.
+- **Accessibility**: no nested interactive controls; edit state uses `aria-pressed`; delete controls are 44px on mobile.
+- **Behavior**: deletion remains scoped to the selected category and persists to the server immediately.
+
+### Gallery Prompt Copy
+
+- **States**: available, copied confirmation, unavailable for legacy outputs, manual-copy fallback.
+- **Accessibility**: disabled legacy actions explain why no prompt exists; successful copy is announced through a live region.
+- **Mobile behavior**: when clipboard access is blocked on plain HTTP, the full prompt opens selected in a readable fallback dialog.
+
 ## 6. Motion & Interaction
 
 | Type | Duration | Easing | Usage |

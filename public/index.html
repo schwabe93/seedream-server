@@ -79,6 +79,17 @@
     white-space: nowrap;
   }
   .topbar-btn:hover { border-color: var(--glow); color: var(--glow); }
+  .xai-quick-btn {
+    border-color: var(--accent);
+    color: var(--glow);
+    min-width: 44px;
+  }
+  .xai-quick-btn:hover,
+  .xai-quick-btn:focus-visible {
+    background: var(--accent);
+    color: #fff;
+    outline: none;
+  }
   header .api-key-input,
   header .data-manager-btn {
     display: none;
@@ -719,14 +730,38 @@
     margin-bottom: 8px;
     text-transform: uppercase;
   }
+  .prompt-builder-title-actions {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+  }
+  .prompt-keyword-edit {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted-strong);
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 700;
+    min-height: 28px;
+    padding: 4px 8px;
+  }
+  .prompt-keyword-edit[aria-pressed="true"] {
+    border-color: var(--accent);
+    color: var(--glow);
+  }
   .prompt-category-delete {
-    background: none;
-    border: none;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
     color: var(--muted);
     cursor: pointer;
     font-size: 13px;
     line-height: 1;
-    padding: 2px;
+    min-height: 28px;
+    min-width: 28px;
+    padding: 4px;
   }
   .prompt-category-delete:hover { color: var(--danger); }
   .prompt-category-lock {
@@ -740,6 +775,11 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+  }
+  .prompt-chip-wrap {
+    align-items: stretch;
+    display: inline-flex;
+    max-width: 100%;
   }
   .prompt-chip {
     align-items: center;
@@ -756,21 +796,37 @@
     padding: 5px 8px;
     transition: all 0.15s;
   }
+  .prompt-chip-wrap.editing .prompt-chip {
+    border-radius: 999px 0 0 999px;
+  }
   .prompt-chip.selected {
     background: #1a1830;
     border-color: var(--accent);
     color: var(--glow);
   }
   .prompt-chip-delete {
-    background: none;
-    border: none;
-    color: var(--muted);
+    align-items: center;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: none;
+    border-radius: 0 999px 999px 0;
+    color: var(--danger);
     cursor: pointer;
+    display: inline-flex;
     font-size: 12px;
+    justify-content: center;
     line-height: 1;
-    padding: 0 1px;
+    min-width: 28px;
+    padding: 0 8px 0 6px;
   }
-  .prompt-chip-delete:hover { color: var(--danger); }
+  .prompt-chip-delete:hover { border-color: var(--danger); }
+  .prompt-chip-empty,
+  .prompt-builder-hint {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .prompt-builder-hint { margin: -6px 0 10px; }
   .prompt-import-row {
     display: grid;
     gap: 8px;
@@ -1453,6 +1509,18 @@
 
     .prompt-bar { padding: 12px; }
 
+    .xai-quick-btn,
+    .prompt-keyword-edit,
+    .prompt-category-delete,
+    .prompt-chip-delete {
+      min-height: 44px;
+    }
+
+    .prompt-category-delete,
+    .prompt-chip-delete {
+      min-width: 44px;
+    }
+
     .prompt-input-row {
       flex-direction: column;
       align-items: stretch;
@@ -1512,7 +1580,8 @@
   @media (max-width: 560px) {
     header {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 8px;
     }
 
     .logo {
@@ -1591,6 +1660,7 @@
     <div class="logo-icon">✦</div>
     Seedream Studio
   </div>
+  <button class="topbar-btn xai-quick-btn" id="xaiQuickButton" onclick="openPromptGeneratorModal(true)" aria-haspopup="dialog" aria-controls="promptGeneratorModal" aria-expanded="false" title="Open xAI Prompt Generator">xAI</button>
   <button class="topbar-btn" id="studioMenuButton" onclick="toggleStudioMenu()" aria-expanded="false">
     <span class="desktop-menu-label">Menu</span>
     <span class="mobile-menu-label">Library</span>
@@ -2056,16 +2126,17 @@
 </div>
 
 <!-- XAI PROMPT GENERATOR MODAL -->
-<div class="modal-overlay" id="promptGeneratorModal">
+<div class="modal-overlay" id="promptGeneratorModal" role="dialog" aria-modal="true" aria-labelledby="xaiPromptGeneratorTitle">
   <div class="modal" style="width:660px;max-width:calc(100vw - 24px);max-height:92vh;overflow-y:auto">
-    <h3>xAI Prompt Generator</h3>
-    <div class="prompt-reference-builder" id="xaiReferenceBuilder"></div>
+    <h3 id="xaiPromptGeneratorTitle">xAI Prompt Generator</h3>
+    <div class="prompt-builder-hint">Select details for the prompt. Use <strong>Edit keywords</strong> inside a category to remove saved keywords.</div>
+    <div class="prompt-reference-builder" id="xaiReferenceBuilder" onclick="handleXaiPromptBuilderClick(event)"></div>
     <textarea class="modal-textarea" id="xaiPromptIdea" placeholder="Short idea, scene, product, character, mood..." rows="5"></textarea>
     <div class="prompt-category-row">
       <input class="modal-input" id="xaiNewCategoryInput" style="margin:0" placeholder="New category name..." onkeydown="if(event.key==='Enter'){event.preventDefault();addXaiPromptCategory()}">
       <button class="btn-secondary" onclick="addXaiPromptCategory()">Add Category</button>
     </div>
-    <div class="prompt-builder" id="xaiPromptBuilder"></div>
+    <div class="prompt-builder" id="xaiPromptBuilder" onclick="handleXaiPromptBuilderClick(event)"></div>
     <div class="prompt-import-row">
       <select class="modal-input" id="xaiImportCategory" style="margin:0"></select>
       <input class="modal-input" id="xaiImportInput" style="margin:0" placeholder="Import comma-separated keywords..." onkeydown="if(event.key==='Enter'){event.preventDefault();importXaiPromptKeywords()}">
@@ -2116,12 +2187,20 @@ async function serverGet(key, fallback = null) {
 
 async function serverSet(key, value) {
   try {
-    await fetch(`${SERVER}/api/store/${encodeURIComponent(key)}`, {
+    const response = await fetch(`${SERVER}/api/store/${encodeURIComponent(key)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: typeof value === 'string' ? value : JSON.stringify(value) }),
     });
-  } catch (e) { console.warn('serverSet failed', key, e); }
+    if (!response.ok) {
+      console.warn('serverSet failed', key, response.status);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('serverSet failed', key, e);
+    return false;
+  }
 }
 
 async function serverDel(key) {
@@ -2141,12 +2220,12 @@ async function serverSetBulk(entries) {
 }
 
 // Save a generated output URL to the server permanently
-async function saveOutputToServer(url, filename) {
+async function saveOutputToServer(url, filename, prompt = '') {
   try {
     const r = await fetch(`${SERVER}/api/save-output`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, filename }),
+      body: JSON.stringify({ url, filename, prompt }),
     });
     if (!r.ok) return url; // fallback to original URL
     const d = await r.json();
@@ -2155,7 +2234,9 @@ async function saveOutputToServer(url, filename) {
 }
 
 function getPromptText(entry) {
-  return String(entry?.promptFull || entry?.prompt || '').trim();
+  const prompt = String(entry?.promptFull || entry?.prompt || '').trim();
+  if (entry?.promptUnavailable || (entry?.model === 'Recovered' && prompt === 'Recovered from server output')) return '';
+  return prompt;
 }
 
 function normalizeOutputUrl(value) {
@@ -2169,14 +2250,8 @@ function normalizeOutputUrl(value) {
   }
 }
 
-function outputBasename(value) {
-  const normalized = normalizeOutputUrl(value);
-  return normalized.split('/').pop() || '';
-}
-
 function findHistoryItemByOutput(outputUrl) {
   const wanted = normalizeOutputUrl(outputUrl);
-  const wantedName = outputBasename(outputUrl);
   return history.find(h => {
     const candidates = [
       h.thumb,
@@ -2184,10 +2259,7 @@ function findHistoryItemByOutput(outputUrl) {
       ...(Array.isArray(h.outputs) ? h.outputs : []),
     ].filter(Boolean);
 
-    return candidates.some(candidate => (
-      normalizeOutputUrl(candidate) === wanted ||
-      (wantedName && outputBasename(candidate) === wantedName)
-    ));
+    return candidates.some(candidate => normalizeOutputUrl(candidate) === wanted);
   }) || null;
 }
 
@@ -2203,21 +2275,30 @@ async function copyTextToClipboard(text, successMsg = 'Copied to clipboard') {
     } else {
       const ta = document.createElement('textarea');
       ta.value = value;
-      ta.setAttribute('readonly', '');
       ta.style.position = 'fixed';
-      ta.style.top = '-9999px';
-      ta.style.left = '-9999px';
+      ta.style.top = '0';
+      ta.style.left = '0';
+      ta.style.width = '1px';
+      ta.style.height = '1px';
+      ta.style.opacity = '0.01';
+      ta.style.fontSize = '16px';
       document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
+      let ok = false;
+      try {
+        ta.focus({ preventScroll: true });
+        ta.select();
+        ta.setSelectionRange(0, value.length);
+        ok = document.execCommand('copy');
+      } finally {
+        ta.remove();
+      }
       if (!ok) throw new Error('execCommand copy failed');
     }
     showToast(successMsg, 'success');
     return true;
   } catch (e) {
-    showToast('Clipboard copy failed', 'error');
+    window.prompt('Automatic copying is blocked on this connection. Long-press the selected prompt and choose Copy:', value);
+    showToast('Prompt opened for manual copy', 'error');
     return false;
   }
 }
@@ -2450,6 +2531,9 @@ let apiKey    = '';
 let xaiAuthToken = '';
 let xaiPromptCategories = [];
 const selectedXaiPromptKeywords = new Set();
+const editingXaiPromptCategoryIds = new Set();
+let xaiPromptCategorySaveQueue = Promise.resolve(true);
+let xaiKeywordDeletePending = false;
 let prompts   = [];
 let promptFolders = [];
 let folders   = [];
@@ -2789,13 +2873,16 @@ async function bootFromServer() {
       history = files.slice(0, 50).map((f, i) => {
         const name = f.name || '';
         const isVideo = /\.(mp4|webm)$/i.test(name);
-        const outputUrl = `/outputs/${name}`;
+        const outputUrl = `/outputs/${encodeURIComponent(name)}`;
+        const recoveredPrompt = String(f.prompt || '').trim();
         const timestamp = new Date(f.mtime || Date.now()).toLocaleTimeString();
         return {
           id: Date.now() - i,
           type: isVideo ? 'video' : 'image',
           model: 'Recovered',
-          prompt: 'Recovered from server output',
+          prompt: recoveredPrompt,
+          promptFull: recoveredPrompt,
+          promptUnavailable: !recoveredPrompt,
           thumb: outputUrl,
           videoUrl: isVideo ? outputUrl : '',
           outputs: [outputUrl],
@@ -2883,7 +2970,10 @@ function normalizeXaiPromptCategories(saved) {
 }
 
 function saveXaiPromptCategories() {
-  serverSet('xaiPromptCategories', xaiPromptCategories);
+  const snapshot = xaiPromptCategories.map(cat => ({ ...cat, keywords: [...cat.keywords] }));
+  const save = xaiPromptCategorySaveQueue.then(() => serverSet('xaiPromptCategories', snapshot));
+  xaiPromptCategorySaveQueue = save.catch(() => false);
+  return save;
 }
 
 function slugifyXaiCategoryName(name) {
@@ -2922,30 +3012,50 @@ function renderXaiPromptBuilder() {
   builder.innerHTML = editableCategories.map(cat => renderXaiPromptCategory(cat)).join('');
 
   importCategory.innerHTML = xaiPromptCategories
-    .map(cat => `<option value="${cat.id}">${escHtml(cat.name)}</option>`)
+    .map(cat => `<option value="${escHtml(cat.id)}">${escHtml(cat.name)}</option>`)
     .join('');
 }
 
 function renderXaiPromptCategory(cat) {
+  const isEditing = editingXaiPromptCategoryIds.has(cat.id);
   return `
     <div class="prompt-builder-category">
       <div class="prompt-builder-title">
         <span>${escHtml(cat.name)}</span>
-        ${cat.locked ? '<span class="prompt-category-lock">locked</span>' : `<button class="prompt-category-delete" onclick="deleteXaiPromptCategory('${cat.id}')" title="Delete category">×</button>`}
+        <div class="prompt-builder-title-actions">
+          <button type="button" class="prompt-keyword-edit" data-xai-action="edit-keywords" data-category-id="${escHtml(cat.id)}" aria-pressed="${isEditing}" title="${isEditing ? 'Finish deleting keywords' : 'Delete keywords in this category'}">${isEditing ? 'Done' : 'Edit keywords'}</button>
+          ${cat.locked
+            ? '<span class="prompt-category-lock">category fixed</span>'
+            : `<button type="button" class="prompt-category-delete" data-xai-action="delete-category" data-category-id="${escHtml(cat.id)}" aria-label="Delete category ${escHtml(cat.name)}" title="Delete category">×</button>`}
+        </div>
       </div>
       <div class="prompt-chip-list">
-        ${cat.keywords.map(keyword => {
+        ${cat.keywords.length ? cat.keywords.map(keyword => {
           const key = `${cat.id}:${keyword}`;
           return `
-            <button class="prompt-chip${selectedXaiPromptKeywords.has(key) ? ' selected' : ''}" onclick="toggleXaiPromptKeyword('${cat.id}', '${escJs(keyword)}')">
-              <span>${escHtml(keyword)}</span>
-              <span class="prompt-chip-delete" onclick="deleteXaiPromptKeyword(event, '${cat.id}', '${escJs(keyword)}')" title="Delete">×</span>
-            </button>
+            <span class="prompt-chip-wrap${isEditing ? ' editing' : ''}">
+              <button type="button" class="prompt-chip${selectedXaiPromptKeywords.has(key) ? ' selected' : ''}" data-xai-action="toggle-keyword" data-category-id="${escHtml(cat.id)}" data-keyword="${escHtml(keyword)}" aria-pressed="${selectedXaiPromptKeywords.has(key)}">
+                ${escHtml(keyword)}
+              </button>
+              ${isEditing ? `<button type="button" class="prompt-chip-delete" data-xai-action="delete-keyword" data-category-id="${escHtml(cat.id)}" data-keyword="${escHtml(keyword)}" aria-label="Delete keyword ${escHtml(keyword)}" title="Delete keyword"${xaiKeywordDeletePending ? ' disabled' : ''}>×</button>` : ''}
+            </span>
           `;
-        }).join('')}
+        }).join('') : '<span class="prompt-chip-empty">No keywords yet. Import some below.</span>'}
       </div>
     </div>
   `;
+}
+
+function handleXaiPromptBuilderClick(event) {
+  const control = event.target.closest('[data-xai-action]');
+  if (!control) return;
+  const categoryId = control.dataset.categoryId || '';
+  const keyword = control.dataset.keyword || '';
+
+  if (control.dataset.xaiAction === 'toggle-keyword') toggleXaiPromptKeyword(categoryId, keyword);
+  if (control.dataset.xaiAction === 'edit-keywords') toggleXaiKeywordEditMode(categoryId);
+  if (control.dataset.xaiAction === 'delete-keyword') deleteXaiPromptKeyword(categoryId, keyword);
+  if (control.dataset.xaiAction === 'delete-category') deleteXaiPromptCategory(categoryId);
 }
 
 function addXaiPromptCategory() {
@@ -2974,6 +3084,7 @@ function deleteXaiPromptCategory(categoryId) {
   if (!confirm(`Delete category "${cat.name}" and all its keywords?`)) return;
 
   cat.keywords.forEach(keyword => selectedXaiPromptKeywords.delete(`${cat.id}:${keyword}`));
+  editingXaiPromptCategoryIds.delete(categoryId);
   xaiPromptCategories = xaiPromptCategories.filter(item => item.id !== categoryId);
   if (!xaiPromptCategories.length) {
     xaiPromptCategories = normalizeXaiPromptCategories(null);
@@ -2983,10 +3094,6 @@ function deleteXaiPromptCategory(categoryId) {
   showToast('Category deleted', 'success');
 }
 
-function escJs(s) {
-  return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, ' ');
-}
-
 function toggleXaiPromptKeyword(categoryId, keyword) {
   const key = `${categoryId}:${keyword}`;
   if (selectedXaiPromptKeywords.has(key)) selectedXaiPromptKeywords.delete(key);
@@ -2994,14 +3101,42 @@ function toggleXaiPromptKeyword(categoryId, keyword) {
   renderXaiPromptBuilder();
 }
 
-function deleteXaiPromptKeyword(event, categoryId, keyword) {
-  event.stopPropagation();
+function toggleXaiKeywordEditMode(categoryId) {
+  if (editingXaiPromptCategoryIds.has(categoryId)) editingXaiPromptCategoryIds.delete(categoryId);
+  else editingXaiPromptCategoryIds.add(categoryId);
+  renderXaiPromptBuilder();
+}
+
+async function deleteXaiPromptKeyword(categoryId, keyword) {
+  if (xaiKeywordDeletePending) return;
   const cat = xaiPromptCategories.find(item => item.id === categoryId);
   if (!cat) return;
+  xaiKeywordDeletePending = true;
+  const previousKeywords = [...cat.keywords];
+  const selectionKey = `${categoryId}:${keyword}`;
+  const wasSelected = selectedXaiPromptKeywords.has(selectionKey);
   cat.keywords = cat.keywords.filter(item => item !== keyword);
-  selectedXaiPromptKeywords.delete(`${categoryId}:${keyword}`);
-  saveXaiPromptCategories();
+  selectedXaiPromptKeywords.delete(selectionKey);
   renderXaiPromptBuilder();
+  let saved = false;
+  try {
+    saved = await saveXaiPromptCategories();
+  } catch {
+    saved = false;
+  }
+  try {
+    if (!saved) {
+      const originalIndex = previousKeywords.indexOf(keyword);
+      const restoredKeywords = cat.keywords.filter(item => item !== keyword);
+      restoredKeywords.splice(Math.min(Math.max(originalIndex, 0), restoredKeywords.length), 0, keyword);
+      cat.keywords = restoredKeywords;
+      if (wasSelected) selectedXaiPromptKeywords.add(selectionKey);
+    }
+  } finally {
+    xaiKeywordDeletePending = false;
+    renderXaiPromptBuilder();
+  }
+  showToast(saved ? 'Keyword deleted' : 'Keyword could not be deleted', saved ? 'success' : 'error');
 }
 
 function importXaiPromptKeywords() {
@@ -3140,7 +3275,13 @@ window.addEventListener('resize', () => {
   syncStudioPanelAccessibility();
 });
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && document.body.classList.contains('menu-open')) closeStudioMenu();
+  if (event.key !== 'Escape') return;
+  const openModal = document.querySelector('.modal-overlay.show');
+  if (openModal) {
+    closeModal(openModal.id);
+    return;
+  }
+  if (document.body.classList.contains('menu-open')) closeStudioMenu();
 });
 requestAnimationFrame(() => {
   updateMobileHeaderHeight();
@@ -3155,11 +3296,13 @@ function openSettingsModal() {
   document.getElementById('settingsModal').classList.add('show');
 }
 
-function openPromptGeneratorModal() {
+function openPromptGeneratorModal(syncCurrentPrompt = false) {
   document.getElementById('promptGeneratorModal').classList.add('show');
+  document.getElementById('xaiQuickButton').setAttribute('aria-expanded', 'true');
   const idea = document.getElementById('xaiPromptIdea');
-  if (idea && !idea.value.trim()) idea.value = document.getElementById('promptTextarea').value.trim();
+  if (idea && (syncCurrentPrompt || !idea.value.trim())) idea.value = document.getElementById('promptTextarea').value.trim();
   renderXaiPromptBuilder();
+  setTimeout(() => idea?.focus(), 0);
 }
 
 function useCurrentPromptAsIdea() {
@@ -4305,12 +4448,13 @@ async function generateImage(prompt, settings) {
 
     const timestamp = new Date().toLocaleTimeString();
     const ts = Date.now();
+    const predictionToken = String(predictionId).replace(/[^a-zA-Z0-9_-]/g, '-').slice(-48) || String(ts);
     let savedCount = 0;
 
     // Save all outputs to server first, get local URLs
     const localOutputs = await Promise.all(outputs.map(async (u, i) => {
-      const fname = `img-${ts}-${i}-${model.replace(/[\/:]/g,'-')}.jpg`;
-      return await saveOutputToServer(u, fname);
+      const fname = `img-${ts}-${predictionToken}-${i}-${model.replace(/[\/:]/g,'-')}.jpg`;
+      return await saveOutputToServer(u, fname, prompt);
     }));
 
     for (const localUrl of localOutputs) {
@@ -4397,12 +4541,13 @@ async function generateVideo(prompt, settings) {
 
     const timestamp = new Date().toLocaleTimeString();
     const ts = Date.now();
+    const predictionToken = String(predictionId).replace(/[^a-zA-Z0-9_-]/g, '-').slice(-48) || String(ts);
     let savedCount = 0;
 
     // Save videos to server
     const localOutputs = await Promise.all(outputs.map(async (u, i) => {
-      const fname = `vid-${ts}-${i}-${model.replace(/[\/:]/g,'-')}.mp4`;
-      return await saveOutputToServer(u, fname);
+      const fname = `vid-${ts}-${predictionToken}-${i}-${model.replace(/[\/:]/g,'-')}.mp4`;
+      return await saveOutputToServer(u, fname, prompt);
     }));
 
     for (const localUrl of localOutputs) {
@@ -4590,7 +4735,7 @@ function renderHistory() {
       ${thumbHtml}
       <div class="history-info">
         <div class="history-model">${escHtml(h.model)} <span class="mode-badge ${isVideo ? 'video' : 'image'}" style="font-size:9px;padding:1px 5px">${isVideo ? 'VID' : 'IMG'}</span></div>
-        <div class="history-prompt">${escHtml(getPromptText(h))}</div>
+        <div class="history-prompt">${escHtml(getPromptText(h) || 'Prompt unavailable')}</div>
         <div class="history-time">${h.time}</div>
       </div>
       <button class="history-copy-btn" onclick="event.stopPropagation();copyPromptByHistoryId('${h.id}')" title="Copy prompt">⧉</button>
@@ -4796,12 +4941,13 @@ async function deleteOutput(outputUrl, btnEl) {
 // ============================================================
 function closeModal(id) {
   document.getElementById(id).classList.remove('show');
+  if (id === 'promptGeneratorModal') document.getElementById('xaiQuickButton').setAttribute('aria-expanded', 'false');
 }
 
 // Close modals on overlay click
 document.querySelectorAll('.modal-overlay').forEach(el => {
   el.addEventListener('click', e => {
-    if (e.target === el) el.classList.remove('show');
+    if (e.target === el) closeModal(el.id);
   });
 });
 
@@ -5001,6 +5147,7 @@ async function clearAllData() {
   prompts = []; promptFolders = []; folders = []; history = []; apiKey = ''; xaiAuthToken = '';
   xaiPromptCategories = normalizeXaiPromptCategories(null);
   selectedXaiPromptKeywords.clear();
+  editingXaiPromptCategoryIds.clear();
   selectedPromptIds.clear();
   generationQueue = [];
   openPromptFolderIds.clear();
@@ -5008,7 +5155,7 @@ async function clearAllData() {
   promptFolderStateInitialized = false;
   referenceFolderStateInitialized = false;
   await Promise.all([
-    serverDel('atlasApiKey'), serverDel('xaiAuthToken'), serverDel('xaiPromptCategories'), serverDel('atlasPrompts'),
+    serverDel('atlasApiKey'), serverDel('xaiAuthToken'), serverDel('xaiPromptCategories'), serverDel('atlasOutputPrompts'), serverDel('atlasPrompts'),
     serverDel('atlasPromptFolders'),
     serverDel('atlasFolders'), serverDel('atlasHistory'),
   ]);

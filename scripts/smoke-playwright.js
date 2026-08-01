@@ -26,7 +26,12 @@ async function main() {
   const evidenceDir = process.env.SMOKE_EVIDENCE_DIR || path.join(os.tmpdir(), 'seedream-mobile-qa');
   fs.mkdirSync(outputDir, { recursive: true });
   fs.mkdirSync(evidenceDir, { recursive: true });
-  fs.writeFileSync(path.join(outputDir, 'smoke-output.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+  const outputPixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+  const persistentOutputPrompt = 'Persistent output prompt "with quotes", apostrophe\'s, and a newline.\nSecond line.';
+  fs.writeFileSync(path.join(outputDir, 'smoke-output.png'), outputPixel);
+  fs.writeFileSync(path.join(outputDir, 'orphan-output.png'), outputPixel);
+  fs.writeFileSync(path.join(outputDir, 'remote-collision.png'), outputPixel);
+  fs.writeFileSync(path.join(outputDir, 'delete-collision.png'), outputPixel);
 
   const server = spawn(process.execPath, ['server.js'], {
     cwd: root,
@@ -43,6 +48,44 @@ async function main() {
 
   try {
     await waitForHealth(`${baseUrl}/api/health`, instanceToken);
+    const indexResponse = await fetch(baseUrl);
+    assert(indexResponse.headers.get('cache-control') === 'no-cache', 'HTML responses remain pinned in browser cache after deployment');
+    assert(indexResponse.headers.get('x-content-type-options') === 'nosniff', 'Static responses can still be MIME-sniffed');
+
+    await fetch(`${baseUrl}/api/store/atlasHistory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        value: JSON.stringify([{
+          id: 'remote-collision',
+          promptFull: 'Remote prompt must not attach to a local file.',
+          thumb: 'https://cdn.example/outputs/remote-collision.png',
+          outputs: ['https://cdn.example/outputs/remote-collision.png'],
+        }]),
+      }),
+    });
+    const collisionOutputsResponse = await fetch(`${baseUrl}/api/outputs`);
+    const collisionOutputs = await collisionOutputsResponse.json();
+    assert(!collisionOutputs.files.find(file => file.name === 'remote-collision.png')?.prompt, 'Remote basename collision exposed the wrong prompt');
+    fs.unlinkSync(path.join(outputDir, 'remote-collision.png'));
+
+    await fetch(`${baseUrl}/api/store/atlasHistory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        value: JSON.stringify([
+          { id: 'local-delete', outputs: ['/outputs/delete-collision.png'], thumb: '/outputs/delete-collision.png' },
+          { id: 'remote-keep', outputs: ['https://cdn.example/outputs/delete-collision.png'], thumb: 'https://cdn.example/outputs/delete-collision.png' },
+        ]),
+      }),
+    });
+    const collisionDeleteResponse = await fetch(`${baseUrl}/api/output/delete-collision.png`, { method: 'DELETE' });
+    assert(collisionDeleteResponse.ok, 'Local collision fixture could not be deleted');
+    const collisionHistoryResponse = await fetch(`${baseUrl}/api/store/atlasHistory`);
+    const collisionHistoryData = await collisionHistoryResponse.json();
+    const collisionHistory = JSON.parse(collisionHistoryData.value || '[]');
+    assert(collisionHistory.some(item => item.id === 'remote-keep'), 'Deleting a local output removed unrelated remote history with the same basename');
+    assert(!collisionHistory.some(item => item.id === 'local-delete'), 'Deleting a local output left its local history entry behind');
 
     await fetch(`${baseUrl}/api/store/atlasHistory`, {
       method: 'POST',
@@ -52,14 +95,95 @@ async function main() {
           id: 'smoke-history',
           type: 'image',
           model: 'smoke',
-          promptFull: 'Smoke prompt "with quotes" and commas, still copyable.',
-          prompt: 'Smoke prompt fallback',
+          promptFull: 'History fallback prompt that must not override output metadata.',
+          prompt: 'History fallback prompt',
           thumb: '/outputs/smoke-output.png',
           outputs: ['/outputs/smoke-output.png'],
           time: 'smoke',
         }]),
       }),
     });
+
+    const promptMetadataResponse = await fetch(`${baseUrl}/api/save-output`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: `${baseUrl}/outputs/smoke-output.png`,
+        filename: 'smoke-output.png',
+        prompt: persistentOutputPrompt,
+      }),
+    });
+    assert(promptMetadataResponse.ok, 'Existing output prompt metadata could not be saved');
+
+    const overwriteResponse = await fetch(`${baseUrl}/api/save-output`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: `${baseUrl}/outputs/smoke-output.png`,
+        filename: 'smoke-output.png',
+        prompt: 'Later metadata must not overwrite the original prompt.',
+      }),
+    });
+    assert(overwriteResponse.ok, 'Existing output could not be acknowledged on a repeated save');
+
+    const unsupportedResponse = await fetch(`${baseUrl}/api/save-output`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: `${baseUrl}/outputs/smoke-output.png`,
+        filename: 'unsafe-output.html',
+        prompt: 'Unsafe metadata',
+      }),
+    });
+    assert(unsupportedResponse.status === 400, 'Unsupported output file type was accepted');
+
+    const oversizedPromptResponse = await fetch(`${baseUrl}/api/save-output`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: `${baseUrl}/outputs/smoke-output.png`,
+        filename: 'oversized-output.png',
+        prompt: 'x'.repeat(50001),
+      }),
+    });
+    assert(oversizedPromptResponse.status === 413, 'Oversized output prompt metadata was accepted');
+
+    const failedDownloadResponse = await fetch(`${baseUrl}/api/save-output`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: `${baseUrl}/missing-output.png`,
+        filename: 'failed-output.png',
+        prompt: 'Failed downloads must not persist this prompt.',
+      }),
+    });
+    assert(!failedDownloadResponse.ok, 'Missing remote output unexpectedly downloaded');
+    assert(!fs.existsSync(path.join(outputDir, 'failed-output.png')), 'Failed download left an output file behind');
+    assert(!fs.readdirSync(outputDir).some(name => name.startsWith('failed-output.png.part-')), 'Failed download left a partial file behind');
+
+    const protectedOutputsResponse = await fetch(`${baseUrl}/api/outputs`);
+    const protectedOutputs = await protectedOutputsResponse.json();
+    const protectedOutput = protectedOutputs.files.find(file => file.name === 'smoke-output.png');
+    assert(protectedOutput?.prompt === persistentOutputPrompt, 'A repeated save overwrote persistent output prompt metadata');
+    assert(!protectedOutputs.files.some(file => file.name === 'failed-output.png'), 'Failed output appeared in the Gallery API');
+
+    const parallelResponses = await Promise.all([
+      fetch(`${baseUrl}/api/save-output`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: `${baseUrl}/outputs/smoke-output.png`, filename: 'parallel-output.png', prompt: 'Parallel prompt A' }),
+      }),
+      fetch(`${baseUrl}/api/save-output`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: `${baseUrl}/outputs/orphan-output.png`, filename: 'parallel-output.png', prompt: 'Parallel prompt B' }),
+      }),
+    ]);
+    assert(parallelResponses.every(response => response.ok), 'Concurrent saves for one output filename did not serialize cleanly');
+    assert(!fs.readdirSync(outputDir).some(name => name.startsWith('parallel-output.png.part-')), 'Concurrent save left a partial file behind');
+    const parallelOutputs = await (await fetch(`${baseUrl}/api/outputs`)).json();
+    assert(['Parallel prompt A', 'Parallel prompt B'].includes(parallelOutputs.files.find(file => file.name === 'parallel-output.png')?.prompt), 'Concurrent save lost its owning prompt metadata');
+    await fetch(`${baseUrl}/api/output/parallel-output.png`, { method: 'DELETE' });
 
     const browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
@@ -105,6 +229,57 @@ async function main() {
       renderFolders();
       renderRefStrip();
     });
+
+    await page.fill('#promptTextarea', 'Quick xAI seed from the generator');
+    const quickButtonMetrics = await page.locator('#xaiQuickButton').evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    });
+    assert(quickButtonMetrics.width >= 44 && quickButtonMetrics.height >= 44, `xAI quick action is too small on mobile: ${JSON.stringify(quickButtonMetrics)}`);
+    await page.click('#xaiQuickButton');
+    await page.waitForFunction(() => document.querySelector('#promptGeneratorModal')?.classList.contains('show'));
+    assert(await page.inputValue('#xaiPromptIdea') === 'Quick xAI seed from the generator', 'xAI quick action did not carry over the current prompt');
+    const xaiDialogSemantics = await page.evaluate(() => ({
+      role: document.getElementById('promptGeneratorModal')?.getAttribute('role'),
+      modal: document.getElementById('promptGeneratorModal')?.getAttribute('aria-modal'),
+      labelledBy: document.getElementById('promptGeneratorModal')?.getAttribute('aria-labelledby'),
+      expanded: document.getElementById('xaiQuickButton')?.getAttribute('aria-expanded'),
+    }));
+    assert(xaiDialogSemantics.role === 'dialog' && xaiDialogSemantics.modal === 'true' && xaiDialogSemantics.labelledBy === 'xaiPromptGeneratorTitle' && xaiDialogSemantics.expanded === 'true', `xAI dialog semantics are incomplete: ${JSON.stringify(xaiDialogSemantics)}`);
+    await page.evaluate(() => closeModal('promptGeneratorModal'));
+    await page.fill('#promptTextarea', 'Updated prompt for second xAI launch');
+    await page.click('#xaiQuickButton');
+    assert(await page.inputValue('#xaiPromptIdea') === 'Updated prompt for second xAI launch', 'Repeated xAI quick action retained a stale idea');
+
+    await page.evaluate(() => {
+      xaiPromptCategories = [
+        { id: 'reference', name: 'Refernz', locked: true, keywords: [] },
+        { id: 'smoke-keywords', name: 'Smoke Keywords', keywords: ['keep me', 'remove me'] },
+      ];
+      selectedXaiPromptKeywords.clear();
+      editingXaiPromptCategoryIds.clear();
+      renderXaiPromptBuilder();
+    });
+    const editKeywordsButton = page.locator('[data-xai-action="edit-keywords"][data-category-id="smoke-keywords"]');
+    await editKeywordsButton.click();
+    assert(await editKeywordsButton.getAttribute('aria-pressed') === 'true', 'Keyword edit mode did not become active');
+    const deleteKeywordButton = page.locator('[data-xai-action="delete-keyword"][data-keyword="remove me"]');
+    const deleteKeywordMetrics = await deleteKeywordButton.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    });
+    assert(deleteKeywordMetrics.width >= 44 && deleteKeywordMetrics.height >= 44, `Keyword delete action is too small on mobile: ${JSON.stringify(deleteKeywordMetrics)}`);
+    await deleteKeywordButton.click();
+    assert(await page.evaluate(() => !xaiPromptCategories.find(category => category.id === 'smoke-keywords')?.keywords.includes('remove me')), 'Keyword deletion did not update its category');
+    await page.waitForFunction(async () => {
+      const response = await fetch('/api/store/xaiPromptCategories');
+      if (!response.ok) return false;
+      const data = await response.json();
+      const categories = JSON.parse(data.value || '[]');
+      return !categories.find(category => category.id === 'smoke-keywords')?.keywords.includes('remove me');
+    });
+    await page.screenshot({ path: path.join(evidenceDir, 'mobile-xai-prompt-375.png'), fullPage: false });
+    await page.evaluate(() => closeModal('promptGeneratorModal'));
 
     await page.click('#studioMenuButton');
     await page.waitForFunction(() => document.body.classList.contains('mobile-panel-prompts'));
@@ -279,11 +454,42 @@ async function main() {
 
     await page.goto(`${baseUrl}/gallery`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.copy-prompt-btn');
-    await page.click('.copy-prompt-btn');
+    const mappedCard = page.locator('.card').filter({ has: page.locator('.name[title="smoke-output.png"]') });
+    await mappedCard.locator('.copy-prompt-btn').click();
     const copied = await page.evaluate(() => navigator.clipboard.readText());
-    if (!copied.includes('Smoke prompt "with quotes"')) {
+    if (copied.replace(/\r\n/g, '\n') !== persistentOutputPrompt.replace(/\r\n/g, '\n')) {
       throw new Error(`Gallery prompt copy failed. Clipboard contained: ${copied}`);
     }
+    assert(await mappedCard.locator('.copy-prompt-btn').textContent() === 'Copied', 'Gallery copy action gave no success feedback');
+    const orphanCard = page.locator('.card').filter({ has: page.locator('.name[title="orphan-output.png"]') });
+    assert(await orphanCard.locator('.copy-prompt-btn').isDisabled(), 'Gallery enabled prompt copy for an output without stored prompt metadata');
+    const galleryCardCount = await page.locator('.card').count();
+    page.once('dialog', dialog => dialog.dismiss());
+    await mappedCard.locator('.delete-output-btn').click();
+    assert(await page.locator('.card').count() === galleryCardCount, 'Dismissed Gallery deletion still removed an output');
+    await page.screenshot({ path: path.join(evidenceDir, 'mobile-gallery-375.png'), fullPage: false });
+
+    await fetch(`${baseUrl}/api/store/atlasHistory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: JSON.stringify([]) }),
+    });
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.querySelector('#serverDot')?.classList.contains('connected'));
+    await page.waitForFunction(expectedPrompt => history.some(item => item.outputs?.includes('/outputs/smoke-output.png') && item.promptFull === expectedPrompt && !item.promptUnavailable), persistentOutputPrompt);
+    assert(await page.evaluate(() => getPromptText(history.find(item => item.outputs?.includes('/outputs/smoke-output.png')))) === persistentOutputPrompt, 'History recovery discarded durable output prompt metadata');
+
+    await fetch(`${baseUrl}/api/store/atlasHistory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: JSON.stringify([]) }),
+    });
+    await fetch(`${baseUrl}/api/store/atlasOutputPrompts`, { method: 'DELETE' });
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => history.length > 0 && history.every(item => item.promptUnavailable));
+    await page.goto(`${baseUrl}/gallery`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.copy-prompt-btn');
+    assert(await page.locator('.copy-prompt-btn:not(:disabled)').count() === 0, 'Recovered legacy outputs exposed a synthetic prompt as copyable');
 
     await browser.close();
     console.log(`Smoke test passed. Evidence: ${evidenceDir}`);
