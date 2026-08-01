@@ -167,6 +167,27 @@ async function main() {
     assert(protectedOutput?.prompt === persistentOutputPrompt, 'A repeated save overwrote persistent output prompt metadata');
     assert(!protectedOutputs.files.some(file => file.name === 'failed-output.png'), 'Failed output appeared in the Gallery API');
 
+    const metadataPatch = await fetch(`${baseUrl}/api/output-meta/smoke-output.png`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ favorite: true, album: 'Smoke Album', model: 'smoke/model', mode: 'image', settings: { size: '1024*1024' } }),
+    });
+    assert(metadataPatch.ok, 'Output metadata could not be updated');
+    const metadataOutputs = await (await fetch(`${baseUrl}/api/outputs`)).json();
+    const metadataOutput = metadataOutputs.files.find(file => file.name === 'smoke-output.png');
+    assert(metadataOutput?.favorite && metadataOutput.album === 'Smoke Album' && metadataOutput.model === 'smoke/model', 'Gallery metadata did not persist');
+
+    const initialBackups = await (await fetch(`${baseUrl}/api/backups`)).json();
+    assert(initialBackups.backups?.some(backup => backup.reason === 'auto'), 'Automatic startup backup was not created');
+    const manualBackupResponse = await fetch(`${baseUrl}/api/backups`, { method: 'POST' });
+    assert(manualBackupResponse.ok, 'Manual server backup could not be created');
+    const manualBackup = (await manualBackupResponse.json()).backup;
+    assert(manualBackup?.reason === 'manual' && fs.existsSync(path.join(smokeDataDir, 'backups', manualBackup.name, 'store.json')), 'Manual backup is incomplete');
+    const unsafeRestore = await fetch(`${baseUrl}/api/backups/restore`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: manualBackup.name }),
+    });
+    assert(unsafeRestore.status === 400, 'Backup restore succeeded without explicit confirmation');
+
     const parallelResponses = await Promise.all([
       fetch(`${baseUrl}/api/save-output`, {
         method: 'POST',
@@ -303,6 +324,20 @@ async function main() {
     await verifyWheelScroll(page, '#promptList');
 
     await page.waitForTimeout(250);
+
+    await page.fill('#promptLibrarySearch', 'Smoke Prompt 14');
+    assert(await page.locator('#promptList .prompt-item').count() === 1, 'Global library search did not filter prompts');
+    await page.click('#promptLibrarySection .library-search-clear');
+    assert(await page.locator('#promptList .prompt-item').count() === 14, 'Clearing global library search did not restore prompts');
+    const favoritePromptButton = page.locator('#prompt-folder-child-smoke .favorite-action').first();
+    await favoritePromptButton.click();
+    await page.waitForFunction(async () => {
+      const response = await fetch('/api/store/atlasFavorites');
+      if (!response.ok) return false;
+      const data = await response.json();
+      return JSON.parse(data.value || '{}').prompts?.includes('prompt-smoke-0');
+    });
+    assert(await favoritePromptButton.getAttribute('class').then(value => value.includes('active')), 'Favorite prompt has no active state');
 
     const promptMetrics = await page.evaluate(() => {
       const rect = selector => {
@@ -529,6 +564,34 @@ async function main() {
     await page.evaluate(() => closeStudioMenu());
     await page.waitForTimeout(250);
     await page.screenshot({ path: path.join(evidenceDir, 'desktop-reference-groups-1280.png'), fullPage: false });
+
+    await page.fill('#promptTextarea', 'Preset smoke prompt');
+    page.once('dialog', dialog => dialog.accept('Smoke Workflow'));
+    await page.evaluate(() => saveWorkflowPreset());
+    await page.waitForFunction(() => workflowPresets.some(preset => preset.name === 'Smoke Workflow'));
+    assert(await page.locator('#workflowPresetSelect option').filter({ hasText: 'Smoke Workflow' }).count() === 1, 'Workflow preset was not rendered');
+    await page.evaluate(() => {
+      document.getElementById('promptTextarea').value = 'Changed after preset';
+      applyWorkflowPreset(workflowPresets.find(item => item.name === 'Smoke Workflow').id);
+    });
+    assert(await page.inputValue('#promptTextarea') === 'Preset smoke prompt', 'Workflow preset did not restore its prompt');
+
+    await page.evaluate(async () => {
+      generationQueue = [{
+        id: 'persisted-smoke-job', prompt: 'Persistent queue prompt', mode: 'image', settings: { model: 'smoke/model', refImages: [] },
+        modelLabel: 'smoke/model', status: 'queued', ownerId: 'another-device', createdAt: new Date().toISOString(), predictionId: '',
+      }];
+      renderQueue();
+      await persistGenerationQueue();
+    });
+    await page.waitForFunction(async () => {
+      const response = await fetch('/api/store/atlasGenerationQueue');
+      if (!response.ok) return false;
+      const data = await response.json();
+      return JSON.parse(data.value || '[]').some(job => job.id === 'persisted-smoke-job');
+    });
+    assert((await page.textContent('#queueList')).includes('Run here'), 'Queue from another device does not offer an explicit takeover');
+    await page.evaluate(async () => { generationQueue = []; renderQueue(); await persistGenerationQueue(); });
     await page.click('#studioMenuButton');
     await page.waitForFunction(() => document.body.classList.contains('menu-open'));
     await page.setViewportSize({ width: 375, height: 812 });
@@ -539,6 +602,13 @@ async function main() {
     await page.goto(`${baseUrl}/gallery`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.copy-prompt-btn');
     const mappedCard = page.locator('.card').filter({ has: page.locator('.name[title="smoke-output.png"]') });
+    assert(await mappedCard.locator('.favorite-btn').getAttribute('class').then(value => value.includes('active')), 'Gallery favorite metadata was not rendered');
+    assert(await page.locator('#galleryAlbum option').filter({ hasText: 'Smoke Album' }).count() === 1, 'Gallery album filter was not populated');
+    await page.fill('#gallerySearch', 'smoke/model');
+    assert(await page.locator('.card').count() === 1, 'Gallery search did not filter by model metadata');
+    await page.fill('#gallerySearch', '');
+    await mappedCard.locator('.card-select').check();
+    assert((await page.textContent('#meta')).includes('1 selected'), 'Gallery multi-selection count did not update');
     await mappedCard.locator('.copy-prompt-btn').click();
     const copied = await page.evaluate(() => navigator.clipboard.readText());
     if (copied.replace(/\r\n/g, '\n') !== persistentOutputPrompt.replace(/\r\n/g, '\n')) {
@@ -570,6 +640,7 @@ async function main() {
       body: JSON.stringify({ value: JSON.stringify([]) }),
     });
     await fetch(`${baseUrl}/api/store/atlasOutputPrompts`, { method: 'DELETE' });
+    await fetch(`${baseUrl}/api/store/atlasOutputMeta`, { method: 'DELETE' });
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => history.length > 0 && history.every(item => item.promptUnavailable));
     await page.goto(`${baseUrl}/gallery`, { waitUntil: 'domcontentloaded' });

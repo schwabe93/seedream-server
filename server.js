@@ -18,10 +18,13 @@ const DATA_DIR    = process.env.SEEDREAM_DATA_DIR
 const DB_FILE     = path.join(DATA_DIR, 'store.json');
 const OUTPUT_DIR  = path.join(DATA_DIR, 'outputs');
 const REFS_DIR    = path.join(DATA_DIR, 'refs');
+const BACKUP_DIR  = path.join(DATA_DIR, 'backups');
+const BACKUP_RETENTION = Math.max(1, Number(process.env.SEEDREAM_BACKUP_RETENTION || 7));
 
 fs.mkdirSync(DATA_DIR,   { recursive: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 fs.mkdirSync(REFS_DIR,   { recursive: true });
+fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
 const outputSaveLocks = new Map();
 
@@ -50,6 +53,89 @@ function persistStore() {
 
 loadStore();
 console.log('Store loaded — ' + Object.keys(store).length + ' keys');
+
+function copyDirectoryContents(source, destination) {
+  fs.mkdirSync(destination, { recursive: true });
+  if (!fs.existsSync(source)) return;
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name);
+    const to = path.join(destination, entry.name);
+    if (entry.isDirectory()) copyDirectoryContents(from, to);
+    else if (entry.isFile()) fs.copyFileSync(from, to);
+  }
+}
+
+function directorySize(target) {
+  if (!fs.existsSync(target)) return 0;
+  return fs.readdirSync(target, { withFileTypes: true }).reduce((total, entry) => {
+    const full = path.join(target, entry.name);
+    return total + (entry.isDirectory() ? directorySize(full) : fs.statSync(full).size);
+  }, 0);
+}
+
+function listBackups() {
+  if (!fs.existsSync(BACKUP_DIR)) return [];
+  return fs.readdirSync(BACKUP_DIR, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && !entry.name.endsWith('.tmp'))
+    .map(entry => {
+      const full = path.join(BACKUP_DIR, entry.name);
+      let manifest = {};
+      try { manifest = JSON.parse(fs.readFileSync(path.join(full, 'manifest.json'), 'utf8')); } catch {}
+      return { name: entry.name, createdAt: manifest.createdAt || fs.statSync(full).mtime.toISOString(), reason: manifest.reason || 'manual', size: directorySize(full) };
+    })
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+function pruneBackups() {
+  listBackups().slice(BACKUP_RETENTION).forEach(backup => {
+    fs.rmSync(path.join(BACKUP_DIR, backup.name), { recursive: true, force: true });
+  });
+}
+
+function createBackup(reason = 'manual', shouldPrune = true) {
+  const createdAt = new Date().toISOString();
+  const safeReason = String(reason || 'manual').replace(/[^a-z0-9_-]/gi, '-').slice(0, 20) || 'manual';
+  const name = `${createdAt.replace(/[:.]/g, '-')}-${safeReason}`;
+  const temp = path.join(BACKUP_DIR, `${name}.tmp`);
+  const target = path.join(BACKUP_DIR, name);
+  fs.rmSync(temp, { recursive: true, force: true });
+  fs.mkdirSync(temp, { recursive: true });
+  fs.writeFileSync(path.join(temp, 'store.json'), JSON.stringify(store), 'utf8');
+  copyDirectoryContents(OUTPUT_DIR, path.join(temp, 'outputs'));
+  copyDirectoryContents(REFS_DIR, path.join(temp, 'refs'));
+  fs.writeFileSync(path.join(temp, 'manifest.json'), JSON.stringify({ version: 1, createdAt, reason: safeReason }, null, 2), 'utf8');
+  fs.renameSync(temp, target);
+  if (shouldPrune) pruneBackups();
+  return listBackups().find(backup => backup.name === name);
+}
+
+function restoreBackup(name) {
+  const safeName = path.basename(String(name || ''));
+  const source = path.join(BACKUP_DIR, safeName);
+  const backupStore = path.join(source, 'store.json');
+  if (!safeName || !fs.existsSync(backupStore)) throw new Error('Backup not found');
+  createBackup('before-restore', false);
+  const parsedStore = JSON.parse(fs.readFileSync(backupStore, 'utf8'));
+  for (const [sourceDir, targetDir] of [[path.join(source, 'outputs'), OUTPUT_DIR], [path.join(source, 'refs'), REFS_DIR]]) {
+    fs.rmSync(targetDir, { recursive: true, force: true });
+    copyDirectoryContents(sourceDir, targetDir);
+  }
+  store = parsedStore;
+  storeVersion = Date.now();
+  fs.writeFileSync(DB_FILE, JSON.stringify(store), 'utf8');
+  pruneBackups();
+  return { ok: true, restored: safeName };
+}
+
+function ensureDailyBackup() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (!listBackups().some(backup => backup.reason === 'auto' && String(backup.createdAt).startsWith(today))) {
+    try { createBackup('auto'); } catch (error) { console.error('Automatic backup failed:', error.message); }
+  }
+}
+
+ensureDailyBackup();
+setInterval(ensureDailyBackup, 60 * 60 * 1000).unref();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function readBody(req) {
@@ -292,6 +378,23 @@ const server = http.createServer(async (req, res) => {
     return jsonResp(res, 200, { version: storeVersion });
   }
 
+  if (pathname === '/api/backups' && req.method === 'GET') {
+    return jsonResp(res, 200, { backups: listBackups(), retention: BACKUP_RETENTION });
+  }
+
+  if (pathname === '/api/backups' && req.method === 'POST') {
+    try { return jsonResp(res, 200, { ok: true, backup: createBackup('manual') }); }
+    catch (error) { return jsonResp(res, 500, { error: error.message }); }
+  }
+
+  if (pathname === '/api/backups/restore' && req.method === 'POST') {
+    try {
+      const { name, confirm } = JSON.parse(await readBody(req) || '{}');
+      if (confirm !== 'RESTORE') return jsonResp(res, 400, { error: 'Restore confirmation missing' });
+      return jsonResp(res, 200, restoreBackup(name));
+    } catch (error) { return jsonResp(res, 500, { error: error.message }); }
+  }
+
   // ── Key-value store ──────────────────────────────────────────────────────
   if (pathname === '/api/store' && req.method === 'GET') {
     const keys = Object.entries(store).map(([k, v]) => ({ key: k, updated_at: v.updated_at }));
@@ -397,7 +500,7 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/save-output' && req.method === 'POST') {
     try {
       const body            = await readBody(req);
-      const { url: fileUrl, filename, prompt } = JSON.parse(body);
+      const { url: fileUrl, filename, prompt, metadata } = JSON.parse(body);
       if (!fileUrl || !filename) return jsonResp(res, 400, { error: 'Missing url or filename' });
 
       // Sanitise filename and only accept formats the Gallery can render.
@@ -425,15 +528,31 @@ const server = http.createServer(async (req, res) => {
         }
       };
 
+      const persistOutputMetadata = () => {
+        const saved = readJsonStore('atlasOutputMeta', {});
+        const allMeta = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+        const incoming = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+        const existingMeta = allMeta[safe] || {};
+        allMeta[safe] = {
+          ...existingMeta,
+          ...incoming,
+          prompt: String(existingMeta.prompt || promptText || ''),
+          createdAt: existingMeta.createdAt || incoming.createdAt || new Date().toISOString(),
+        };
+        writeJsonStore('atlasOutputMeta', allMeta);
+      };
+
       const activeSave = outputSaveLocks.get(safe);
       if (activeSave) {
         await activeSave;
+        persistOutputMetadata();
         return jsonResp(res, 200, { ok: true, localUrl });
       }
 
       // If already saved, just return
       if (fs.existsSync(dest)) {
         persistOutputPrompt();
+        persistOutputMetadata();
         return jsonResp(res, 200, { ok: true, localUrl });
       }
 
@@ -445,6 +564,7 @@ const server = http.createServer(async (req, res) => {
         if (outputSaveLocks.get(safe) === download) outputSaveLocks.delete(safe);
       }
       persistOutputPrompt();
+      persistOutputMetadata();
       console.log('Saved output:', safe);
       return jsonResp(res, 200, { ok: true, localUrl });
     } catch (e) {
@@ -508,6 +628,8 @@ const server = http.createServer(async (req, res) => {
         ? { ...savedPrompts }
         : {};
       const history = readJsonStore('atlasHistory', []);
+      const savedMeta = readJsonStore('atlasOutputMeta', {});
+      const outputMeta = savedMeta && typeof savedMeta === 'object' && !Array.isArray(savedMeta) ? savedMeta : {};
       if (Array.isArray(history)) {
         for (const item of history) {
           const prompt = historyPromptText(item);
@@ -528,7 +650,7 @@ const server = http.createServer(async (req, res) => {
         .map(name => {
           const full = path.join(OUTPUT_DIR, name);
           const stat = fs.statSync(full);
-          return { name, mtime: stat.mtimeMs, prompt: String(outputPrompts[name] || '') };
+          return { name, mtime: stat.mtimeMs, prompt: String(outputPrompts[name] || ''), ...(outputMeta[name] || {}) };
         })
         .filter(f => /\.(png|jpe?g|webp|gif|mp4|webm)$/i.test(f.name))
         .sort((a, b) => b.mtime - a.mtime);
@@ -536,6 +658,30 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       return jsonResp(res, 500, { error: e.message });
     }
+  }
+
+  if (pathname.startsWith('/api/output-meta/') && req.method === 'POST') {
+    const filename = outputFilename(pathname.slice('/api/output-meta/'.length));
+    if (!filename) return jsonResp(res, 400, { error: 'Missing filename' });
+    try {
+      const patch = JSON.parse(await readBody(req) || '{}');
+      const saved = readJsonStore('atlasOutputMeta', {});
+      const allMeta = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+      allMeta[filename] = { ...(allMeta[filename] || {}), ...patch, updatedAt: new Date().toISOString() };
+      writeJsonStore('atlasOutputMeta', allMeta);
+      return jsonResp(res, 200, { ok: true, metadata: allMeta[filename] });
+    } catch (error) { return jsonResp(res, 400, { error: error.message }); }
+  }
+
+  if (pathname === '/api/atlas/cancel' && req.method === 'POST') {
+    try {
+      const { predictionId } = JSON.parse(await readBody(req) || '{}');
+      if (!predictionId) return jsonResp(res, 400, { error: 'Missing prediction ID' });
+      const apiKey = String(readJsonStore('atlasApiKey', '') || '');
+      if (!apiKey) return jsonResp(res, 400, { error: 'Missing Atlas API key' });
+      const result = await atlasDeletePrediction(predictionId, apiKey);
+      return jsonResp(res, result.ok ? 200 : 502, { ok: result.ok, attempts: result.tried });
+    } catch (error) { return jsonResp(res, 400, { error: error.message }); }
   }
 
   // Delete one saved output file and scrub history references.
@@ -562,6 +708,12 @@ const server = http.createServer(async (req, res) => {
       delete savedPrompts[filename];
       writeJsonStore('atlasOutputPrompts', savedPrompts);
       promptMetadataDeleted = true;
+    }
+
+    const savedMeta = readJsonStore('atlasOutputMeta', {});
+    if (savedMeta && typeof savedMeta === 'object' && !Array.isArray(savedMeta) && Object.hasOwn(savedMeta, filename)) {
+      delete savedMeta[filename];
+      writeJsonStore('atlasOutputMeta', savedMeta);
     }
 
     const history = readJsonStore('atlasHistory', []);

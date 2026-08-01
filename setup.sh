@@ -6,7 +6,8 @@
 
 set -e
 
-INSTALL_DIR="$HOME/seedream-studio"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_DIR="${SEEDREAM_INSTALL_DIR:-$SCRIPT_DIR}"
 SERVICE_NAME="seedream-studio"
 PORT=7842
 
@@ -31,10 +32,12 @@ fi
 echo "▶ Installing to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cp "$SCRIPT_DIR/server.js"    "$INSTALL_DIR/"
-cp "$SCRIPT_DIR/package.json" "$INSTALL_DIR/"
-cp -r "$SCRIPT_DIR/public"    "$INSTALL_DIR/"
+if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
+  cp "$SCRIPT_DIR/server.js"    "$INSTALL_DIR/"
+  cp "$SCRIPT_DIR/package.json" "$INSTALL_DIR/"
+  mkdir -p "$INSTALL_DIR/public"
+  cp -r "$SCRIPT_DIR/public/."  "$INSTALL_DIR/public/"
+fi
 mkdir -p "$INSTALL_DIR/data"
 
 echo "  ✓ Files copied"

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Seedream Studio · Atlas Cloud</title>
+<link rel="stylesheet" href="/productivity.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -1866,7 +1867,7 @@
   <div class="spacer"></div>
   <div class="status-dot" id="statusDot"></div>
   <input class="api-key-input" type="password" id="apiKeyInput" placeholder="Atlas Cloud API Key…" oninput="onApiKeyChange(this.value)">
-  <div class="server-status" title="API key, prompts &amp; folders are saved on your local server (SQLite). Data is shared across all devices on your network." style="cursor:help;font-size:13px;color:var(--muted);flex-shrink:0;display:flex;align-items:center;gap:4px">
+  <div class="server-status" title="API key, prompts, references, queue, and settings are saved on your local server. Data is shared across devices on your network." style="cursor:help;font-size:13px;color:var(--muted);flex-shrink:0;display:flex;align-items:center;gap:4px">
     <span id="serverDot" style="width:7px;height:7px;border-radius:50%;background:var(--muted);display:inline-block;transition:background 0.3s"></span>
     💾
   </div>
@@ -1896,6 +1897,10 @@
         <button onclick="openSavePromptModal()" title="New Prompt">＋</button>
       </div>
     </div>
+    <div class="library-search-wrap">
+      <input class="library-search" id="promptLibrarySearch" type="search" placeholder="Search prompts and folders..." oninput="setLibrarySearch(this.value)" aria-label="Search prompt library">
+      <button class="library-search-clear" onclick="setLibrarySearch('')" aria-label="Clear library search">&times;</button>
+    </div>
     <div class="prompt-list" id="promptList"></div>
   </div>
 
@@ -1904,6 +1909,10 @@
     <div class="panel-section-header">
       Reference Folders
       <button onclick="addFolder()" title="New Folder">＋</button>
+    </div>
+    <div class="library-search-wrap">
+      <input class="library-search" id="referenceLibrarySearch" type="search" placeholder="Search references and groups..." oninput="setLibrarySearch(this.value)" aria-label="Search reference library">
+      <button class="library-search-clear" onclick="setLibrarySearch('')" aria-label="Clear library search">&times;</button>
     </div>
     <div class="folder-list" id="folderList"></div>
     <div class="mobile-ref-actions">
@@ -2073,6 +2082,14 @@
   </div>
   <div class="right-section" id="generationSettingsSection">
     <div class="right-section-title">Generation Settings</div>
+
+    <div class="preset-controls">
+      <select class="select-styled" id="workflowPresetSelect" onchange="applyWorkflowPreset(this.value)" aria-label="Workflow preset">
+        <option value="">Workflow presets...</option>
+      </select>
+      <button class="save-folder-btn" onclick="saveWorkflowPreset()">Save</button>
+      <button class="save-folder-btn clear" id="deleteWorkflowPresetButton" onclick="deleteWorkflowPreset()" disabled>Delete</button>
+    </div>
 
     <!-- Image settings -->
     <div class="image-settings" id="imgSettings">
@@ -2280,6 +2297,18 @@
 
     <hr class="dm-divider">
 
+    <div class="dm-section">
+      <div class="dm-section-title">Automatic Server Backups</div>
+      <div class="dm-info-box">Daily snapshots include settings, prompts, references, and generated outputs. The newest seven backups are retained.</div>
+      <div class="dm-btn-row" style="margin-top:10px">
+        <button class="dm-btn export" onclick="createServerBackup()">Create Backup Now</button>
+        <button class="dm-btn merge" onclick="loadServerBackups()">Refresh List</button>
+      </div>
+      <div class="backup-list" id="serverBackupList">Loading backups...</div>
+    </div>
+
+    <hr class="dm-divider">
+
     <!-- Import -->
     <div class="dm-section">
       <div class="dm-section-title">Import</div>
@@ -2400,6 +2429,7 @@
   <span id="toastMsg"></span>
 </div>
 
+<script src="/productivity.js"></script>
 <script>
 // ============================================================
 // STATE
@@ -2453,12 +2483,12 @@ async function serverSetBulk(entries) {
 }
 
 // Save a generated output URL to the server permanently
-async function saveOutputToServer(url, filename, prompt = '') {
+async function saveOutputToServer(url, filename, prompt = '', metadata = {}) {
   try {
     const r = await fetch(`${SERVER}/api/save-output`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, filename, prompt }),
+      body: JSON.stringify({ url, filename, prompt, metadata }),
     });
     if (!r.ok) return url; // fallback to original URL
     const d = await r.json();
@@ -2805,6 +2835,10 @@ const openPromptFolderIds = new Set();
 const openReferenceFolderIds = new Set();
 const selectedPromptIds = new Set();
 let generationQueue = [];
+let generationQueueSaveChain = Promise.resolve(true);
+let favorites = { prompts: [], groups: [] };
+let workflowPresets = [];
+let librarySearchQuery = '';
 let promptFolderStateInitialized = false;
 let referenceFolderStateInitialized = false;
 
@@ -2965,12 +2999,15 @@ async function startPolling() {
 }
 
 async function syncFromServer() {
-  const [savedPrompts, savedPromptFolders, savedFolders, savedReferenceGroups, savedHistory] = await Promise.all([
+  const [savedPrompts, savedPromptFolders, savedFolders, savedReferenceGroups, savedHistory, savedFavorites, savedPresets, savedQueue] = await Promise.all([
     serverGet('atlasPrompts', null),
     serverGet('atlasPromptFolders', null),
     serverGet('atlasFolders', null),
     serverGet('atlasReferenceGroups', []),
     serverGet('atlasHistory', []),
+    serverGet('atlasFavorites', {}),
+    serverGet('atlasWorkflowPresets', []),
+    serverGet('atlasGenerationQueue', []),
   ]);
 
   let changed = false;
@@ -3072,7 +3109,7 @@ function restoreOutputGrid() {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 async function bootFromServer() {
-  const [savedKey, savedXaiToken, savedXaiPromptCategories, savedPrompts, savedPromptFolders, savedFolders, savedReferenceGroups, savedHistory, savedAutosave, savedImageDefaults, savedWorkspace] = await Promise.all([
+  const [savedKey, savedXaiToken, savedXaiPromptCategories, savedPrompts, savedPromptFolders, savedFolders, savedReferenceGroups, savedHistory, savedAutosave, savedImageDefaults, savedWorkspace, savedFavorites, savedPresets, savedQueue, pendingReuse] = await Promise.all([
     serverGet('atlasApiKey', ''),
     serverGet('xaiAuthToken', ''),
     serverGet('xaiPromptCategories', null),
@@ -3084,6 +3121,10 @@ async function bootFromServer() {
     serverGet('atlasAutosave', '0'),
     serverGet('atlasImageDefaults', null),
     serverGet('atlasWorkspace', null),
+    serverGet('atlasFavorites', {}),
+    serverGet('atlasWorkflowPresets', []),
+    serverGet('atlasGenerationQueue', []),
+    serverGet('atlasPendingReuse', null),
   ]);
 
   apiKey = savedKey || '';
@@ -3126,6 +3167,22 @@ async function bootFromServer() {
     ];
     await serverSet('atlasFolders', folders);
   }
+  const nextFavorites = normalizeFavorites(savedFavorites);
+  if (JSON.stringify(nextFavorites) !== JSON.stringify(favorites)) {
+    favorites = nextFavorites;
+    changed = true;
+  }
+  const nextPresets = normalizeWorkflowPresets(savedPresets);
+  if (JSON.stringify(nextPresets) !== JSON.stringify(workflowPresets)) {
+    workflowPresets = nextPresets;
+    renderWorkflowPresets();
+  }
+  if (!activeGenerations && Array.isArray(savedQueue) && JSON.stringify(savedQueue) !== JSON.stringify(generationQueue)) {
+    generationQueue = normalizeGenerationQueue(savedQueue);
+    renderQueue();
+    updateGenerateButtonLabel();
+    processQueue();
+  }
   ensureReferenceFolderShape();
   referenceGroups = normalizeReferenceGroups(savedReferenceGroups);
   if (JSON.stringify(referenceGroups) !== JSON.stringify(savedReferenceGroups || [])) {
@@ -3143,6 +3200,9 @@ async function bootFromServer() {
   }
 
   history = Array.isArray(savedHistory) ? savedHistory : [];
+  favorites = normalizeFavorites(savedFavorites);
+  workflowPresets = normalizeWorkflowPresets(savedPresets);
+  generationQueue = normalizeGenerationQueue(savedQueue);
   if (!history.length) {
     const files = await fetchSavedOutputs();
     if (files.length) {
@@ -3180,10 +3240,16 @@ async function bootFromServer() {
   }
 
   renderPrompts(); renderFolders(); renderHistory(); renderRefStrip();
+  renderWorkflowPresets();
   applyWorkspaceState(savedWorkspace);
+  if (pendingReuse) {
+    applyGalleryReuse(pendingReuse);
+    await serverDel('atlasPendingReuse');
+  }
   restoreOutputGrid();
   renderQueue();
   updateGenerateButtonLabel();
+  processQueue();
   updateSaveFolderUI();
   initSaveFolder();
   setupWorkspaceAutosave();
@@ -3646,11 +3712,17 @@ function applyXaiPrompt() {
 function renderPrompts() {
   const el = document.getElementById('promptList');
   ensurePromptFolderShape();
+  const query = librarySearchQuery;
   if (!prompts.length && !promptFolders.length) {
     el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 6px 8px">No saved prompts yet.</div>';
     return;
   }
-  const rootFolders = getChildren(promptFolders, null);
+  const promptMatches = prompt => !query || `${prompt.name} ${prompt.text}`.toLowerCase().includes(query);
+  const folderMatches = folder => !query
+    || folder.name.toLowerCase().includes(query)
+    || prompts.some(prompt => prompt.folderId === folder.id && promptMatches(prompt))
+    || getChildren(promptFolders, folder.id).some(folderMatches);
+  const rootFolders = getChildren(promptFolders, null).filter(folderMatches);
 
   function countPromptsInBranch(folderId) {
     const direct = prompts.filter(p => p.folderId === folderId).length;
@@ -3659,9 +3731,11 @@ function renderPrompts() {
   }
 
   function renderPromptFolderNode(folder, depth = 0) {
-    const items = prompts.filter(p => p.folderId === folder.id);
-    const children = getChildren(promptFolders, folder.id);
-    const isOpen = openPromptFolderIds.has(folder.id);
+    const folderNameMatches = query && folder.name.toLowerCase().includes(query);
+    const items = prompts.filter(p => p.folderId === folder.id && (folderNameMatches || promptMatches(p)))
+      .sort((a, b) => Number(isFavorite('prompts', b.id)) - Number(isFavorite('prompts', a.id)));
+    const children = getChildren(promptFolders, folder.id).filter(folderMatches);
+    const isOpen = query ? true : openPromptFolderIds.has(folder.id);
     const count = countPromptsInBranch(folder.id);
 
     return `
@@ -3690,6 +3764,7 @@ function renderPrompts() {
                 </div>
               </div>
               <div class="prompt-actions">
+                <button class="favorite-action${isFavorite('prompts', p.id) ? ' active' : ''}" onclick="event.stopPropagation();toggleFavorite('prompts','${p.id}')" title="${isFavorite('prompts', p.id) ? 'Remove favorite' : 'Add favorite'}" aria-label="${isFavorite('prompts', p.id) ? 'Remove prompt from favorites' : 'Add prompt to favorites'}">★</button>
                 <button class="icon-btn use prompt-action-apply" onclick="event.stopPropagation();usePrompt('${p.id}')" title="Use">↑</button>
                 <button class="icon-btn use prompt-action-move" onclick="event.stopPropagation();movePrompt('${p.id}')" title="Move">↔</button>
                 <button class="icon-btn prompt-action-delete" onclick="event.stopPropagation();deletePrompt('${p.id}')" title="Delete">✕</button>
@@ -3702,7 +3777,8 @@ function renderPrompts() {
     `;
   }
 
-  el.innerHTML = rootFolders.map(folder => renderPromptFolderNode(folder)).join('');
+  el.innerHTML = rootFolders.map(folder => renderPromptFolderNode(folder)).join('')
+    || '<div style="font-size:11px;color:var(--muted);padding:8px">No matching prompts or folders.</div>';
 }
 
 function buildPromptFolderOptions(selectedId = '', includeTopLevel = false) {
@@ -3748,6 +3824,7 @@ function deletePrompt(id) {
   if (!prompt || !confirm(`Delete prompt "${prompt.name}"?`)) return;
   selectedPromptIds.delete(id);
   prompts = prompts.filter(p => String(p.id) !== String(id));
+  favorites.prompts = favorites.prompts.filter(item => String(item) !== String(id));
   saveData();
   renderPrompts();
 }
@@ -3777,6 +3854,8 @@ function deletePromptFolder(id) {
   prompts
     .filter(p => branchIds.includes(p.folderId))
     .forEach(p => selectedPromptIds.delete(p.id));
+  const deletedPromptIds = new Set(prompts.filter(p => branchIds.includes(p.folderId)).map(p => String(p.id)));
+  favorites.prompts = favorites.prompts.filter(id => !deletedPromptIds.has(String(id)));
   prompts = prompts.filter(p => !branchIds.includes(p.folderId));
   promptFolders = promptFolders.filter(f => !branchIds.includes(f.id));
   branchIds.forEach(branchId => openPromptFolderIds.delete(branchId));
@@ -4140,16 +4219,21 @@ function renderFolders() {
     el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 6px">No folders yet.</div>';
     return;
   }
-  const rootFolders = getChildren(folders, null);
+  const query = librarySearchQuery;
+  const folderMatches = folder => !query
+    || folder.name.toLowerCase().includes(query)
+    || folder.images.some(image => String(image.name || '').toLowerCase().includes(query))
+    || getChildren(folders, folder.id).some(folderMatches);
+  const rootFolders = getChildren(folders, null).filter(folderMatches);
 
   function renderFolderNode(folder) {
     const fi = folders.findIndex(x => x.id === folder.id);
-    const children = getChildren(folders, folder.id);
+    const children = getChildren(folders, folder.id).filter(folderMatches);
     const selCount = folder.images.filter(img => {
       const src = getImageSrc(img);
       return src && refImages.some(r => getRefSrc(r) === src);
     }).length;
-    const isOpen = openReferenceFolderIds.has(folder.id);
+    const isOpen = query ? true : openReferenceFolderIds.has(folder.id);
     return `
     <div class="folder-item${isOpen ? ' open' : ''}" id="folder-${folder.id}">
       <div class="folder-header" role="button" tabindex="0" aria-expanded="${isOpen}" onclick="toggleFolder('${folder.id}')" onkeydown="activateOnEnterOrSpace(event, () => toggleFolder('${folder.id}'))">
@@ -4165,7 +4249,8 @@ function renderFolders() {
     </div>`;
   }
 
-  el.innerHTML = rootFolders.map(folder => renderFolderNode(folder)).join('');
+  el.innerHTML = rootFolders.map(folder => renderFolderNode(folder)).join('')
+    || '<div style="font-size:11px;color:var(--muted);padding:8px">No matching reference folders.</div>';
 
   // Now populate each folder's image strip using real DOM nodes
   folders.forEach((f, fi) => {
@@ -4458,15 +4543,20 @@ function renderReferenceGroups() {
   saveButton.disabled = refImages.length === 0 || refImages.length > 10;
   list.replaceChildren();
 
-  if (!referenceGroups.length) {
+  const visibleGroups = referenceGroups
+    .filter(group => !librarySearchQuery || group.name.toLowerCase().includes(librarySearchQuery))
+    .sort((a, b) => Number(isFavorite('groups', b.id)) - Number(isFavorite('groups', a.id)));
+  if (!visibleGroups.length) {
     const empty = document.createElement('span');
     empty.className = 'reference-group-empty';
-    empty.textContent = 'Select up to 10 reference images, then save them as a one-click group.';
+    empty.textContent = librarySearchQuery
+      ? 'No matching reference groups.'
+      : 'Select up to 10 reference images, then save them as a one-click group.';
     list.appendChild(empty);
     return;
   }
 
-  referenceGroups.forEach(group => {
+  visibleGroups.forEach(group => {
     const card = document.createElement('div');
     card.className = `reference-group-card${sameReferenceSelection(group.images) ? ' active' : ''}`;
 
@@ -4505,7 +4595,15 @@ function renderReferenceGroups() {
     deleteButton.setAttribute('aria-label', `Delete reference group ${group.name}`);
     deleteButton.onclick = () => deleteReferenceGroup(group.id);
 
-    card.append(applyButton, deleteButton);
+    const favoriteButton = document.createElement('button');
+    favoriteButton.type = 'button';
+    favoriteButton.className = `favorite-action${isFavorite('groups', group.id) ? ' active' : ''}`;
+    favoriteButton.textContent = '★';
+    favoriteButton.title = isFavorite('groups', group.id) ? 'Remove favorite' : 'Add favorite';
+    favoriteButton.setAttribute('aria-label', `${favoriteButton.title}: ${group.name}`);
+    favoriteButton.onclick = () => toggleFavorite('groups', group.id);
+
+    card.append(applyButton, favoriteButton, deleteButton);
     list.appendChild(card);
   });
 }
@@ -4733,13 +4831,24 @@ async function deleteReferenceGroup(id) {
   const group = referenceGroups.find(item => String(item.id) === String(id));
   if (!group || !confirm(`Delete reference group "${group.name}"?`)) return;
   const previous = referenceGroups;
+  const previousFavorites = favorites.groups.slice();
   referenceGroups = referenceGroups.filter(item => String(item.id) !== String(id));
+  favorites.groups = favorites.groups.filter(item => String(item) !== String(id));
   renderReferenceGroups();
-  if (await serverSet('atlasReferenceGroups', referenceGroups)) {
+  const [groupsSaved, favoritesSaved] = await Promise.all([
+    serverSet('atlasReferenceGroups', referenceGroups),
+    serverSet('atlasFavorites', favorites),
+  ]);
+  if (groupsSaved && favoritesSaved) {
     showToast('Reference group deleted', 'success');
     return;
   }
   referenceGroups = previous;
+  favorites.groups = previousFavorites;
+  serverSetBulk([
+    { key: 'atlasReferenceGroups', value: JSON.stringify(referenceGroups) },
+    { key: 'atlasFavorites', value: JSON.stringify(favorites) },
+  ]);
   renderReferenceGroups();
   showToast('Reference group could not be deleted', 'error');
 }
@@ -4895,6 +5004,13 @@ function updateGenerateButtonLabel() {
   document.getElementById('generateBtnText').textContent = label;
 }
 
+function persistGenerationQueue() {
+  const snapshot = generationQueue.slice(0, 50).map(job => JSON.parse(JSON.stringify(job)));
+  const save = generationQueueSaveChain.then(() => serverSet('atlasGenerationQueue', snapshot));
+  generationQueueSaveChain = save.catch(() => false);
+  return save;
+}
+
 function renderQueue() {
   const badge = document.getElementById('queueBadge');
   const list = document.getElementById('queueList');
@@ -4914,14 +5030,25 @@ function renderQueue() {
         : job.status === 'error'
           ? '<span class="queue-status-icon">✕</span>'
           : '<span class="queue-status-icon">•</span>';
+    const ownedHere = job.ownerId === queueRunnerId;
+    const actions = job.status === 'running'
+      ? (ownedHere
+          ? `<button class="queue-item-action danger" onclick="cancelQueueJob('${job.id}')">Cancel</button>`
+          : `<button class="queue-item-action" onclick="takeOverQueueJob('${job.id}')">Resume here</button>`)
+      : ['error', 'canceled'].includes(job.status)
+        ? `<button class="queue-item-action" onclick="retryQueueJob('${job.id}')">Retry</button><button class="queue-item-action danger" onclick="removeQueueJob('${job.id}')">Remove</button>`
+        : job.status === 'queued' && !ownedHere
+          ? `<button class="queue-item-action" onclick="takeOverQueueJob('${job.id}')">Run here</button>`
+          : `<button class="queue-item-action danger" onclick="removeQueueJob('${job.id}')">Remove</button>`;
     return `
       <div class="queue-item ${job.status}">
         ${icon}
         <div class="queue-item-info">
           <div class="queue-item-model">${escHtml(job.modelLabel)}</div>
           <div class="queue-item-prompt">${escHtml(job.prompt)}</div>
+          <div class="queue-item-time">${escHtml(job.status)} · ${escHtml(new Date(job.createdAt || Date.now()).toLocaleString())}</div>
         </div>
-        <button class="queue-item-remove" onclick="removeQueueJob('${job.id}')" title="Remove">✕</button>
+        <div class="queue-item-actions">${actions}</div>
       </div>
     `;
   }).join('');
@@ -4933,35 +5060,74 @@ function removeQueueJob(id) {
   generationQueue = generationQueue.filter(item => item.id !== id);
   renderQueue();
   updateGenerateButtonLabel();
+  persistGenerationQueue();
+}
+
+function retryQueueJob(id) {
+  const job = generationQueue.find(item => item.id === id);
+  if (!job || !['error', 'canceled'].includes(job.status)) return;
+  Object.assign(job, { status: 'queued', predictionId: job.atlasFailed ? '' : job.predictionId, atlasFailed: false, error: '', ownerId: queueRunnerId });
+  persistGenerationQueue();
+  renderQueue();
+  processQueue();
+}
+
+function takeOverQueueJob(id) {
+  const job = generationQueue.find(item => item.id === id);
+  if (!job || job.status === 'done') return;
+  Object.assign(job, { status: 'queued', ownerId: queueRunnerId });
+  persistGenerationQueue();
+  renderQueue();
+  processQueue();
+}
+
+async function cancelQueueJob(id) {
+  const job = generationQueue.find(item => item.id === id);
+  if (!job || job.status !== 'running') return;
+  Object.assign(job, { status: 'canceled', error: 'Canceled by user' });
+  renderQueue();
+  await persistGenerationQueue();
+  if (job.predictionId) fetch('/api/atlas/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ predictionId: job.predictionId }),
+  }).catch(() => {});
 }
 
 function clearQueue() {
   generationQueue = generationQueue.filter(job => job.status === 'running');
   renderQueue();
   updateGenerateButtonLabel();
+  persistGenerationQueue();
 }
 
 function processQueue() {
   while (activeGenerations < MAX_CONCURRENT_GENERATIONS) {
-    const nextJob = generationQueue.find(job => job.status === 'queued');
+    const nextJob = generationQueue.find(job => job.status === 'queued' && (!job.ownerId || job.ownerId === queueRunnerId));
     if (!nextJob) break;
 
     nextJob.status = 'running';
+    nextJob.ownerId = queueRunnerId;
     activeGenerations++;
     renderQueue();
     updateGenerateButtonLabel();
+    persistGenerationQueue();
 
     (async () => {
       try {
-        if (nextJob.mode === 'image') await generateImage(nextJob.prompt, nextJob.settings);
-        else await generateVideo(nextJob.prompt, nextJob.settings);
-        nextJob.status = 'done';
+        if (nextJob.mode === 'image') await generateImage(nextJob.prompt, nextJob.settings, nextJob);
+        else await generateVideo(nextJob.prompt, nextJob.settings, nextJob);
+        if (nextJob.status !== 'canceled') nextJob.status = 'done';
       } catch (err) {
-        nextJob.status = 'error';
+        if (nextJob.status !== 'canceled') {
+          nextJob.status = 'error';
+          nextJob.error = err.message;
+        }
       } finally {
         activeGenerations = Math.max(0, activeGenerations - 1);
         renderQueue();
         updateGenerateButtonLabel();
+        persistGenerationQueue();
         processQueue();
       }
     })();
@@ -4975,6 +5141,9 @@ function enqueueGenerationJobs(promptTexts, mode, settings) {
     mode,
     settings: JSON.parse(JSON.stringify(settings)),
     status: 'queued',
+    ownerId: queueRunnerId,
+    createdAt: new Date().toISOString(),
+    predictionId: '',
     modelLabel: mode === 'image'
       ? (settings.model || 'image').split('/').pop()
       : (settings.model || 'video').split('/').pop(),
@@ -4983,6 +5152,7 @@ function enqueueGenerationJobs(promptTexts, mode, settings) {
   generationQueue.unshift(...jobs);
   renderQueue();
   updateGenerateButtonLabel();
+  persistGenerationQueue();
   processQueue();
   return jobs.length;
 }
@@ -5013,8 +5183,9 @@ function generate() {
   showToast(`${queued} prompt${queued === 1 ? '' : 's'} added to queue`, 'success');
 }
 
-async function generateImage(prompt, settings) {
+async function generateImage(prompt, settings, queueJob = null) {
   const { model, size, count, syncMode, guidance, refImages: rawRefs } = settings;
+  if (queueJob?.predictionId && history.some(item => String(item.predictionId) === String(queueJob.predictionId))) return;
   const jobRefs = await prepareJobRefs(rawRefs);
 
   const grid = document.getElementById('outputGrid');
@@ -5041,29 +5212,36 @@ async function generateImage(prompt, settings) {
       if (jobRefs.length > 1) body.images = jobRefs.slice(0, 10).map(r => r.dataUrl);
     }
 
-    const resp = await fetch('https://api.atlascloud.ai/api/v1/model/generateImage', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify(body),
-    });
-    const result = await resp.json();
-    if (!resp.ok) { const e = new Error(result.message || result.error || `HTTP ${resp.status}`); e.raw = JSON.stringify(result); throw e; }
-
-    const predictionId = result.data?.id;
-    if (!predictionId) throw new Error('No prediction ID returned');
-    const outputs = await pollPrediction(predictionId);
+    let predictionId = queueJob?.predictionId || '';
+    if (!predictionId) {
+      const resp = await fetch('https://api.atlascloud.ai/api/v1/model/generateImage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+      });
+      const result = await resp.json();
+      if (!resp.ok) { const e = new Error(result.message || result.error || `HTTP ${resp.status}`); e.raw = JSON.stringify(result); throw e; }
+      predictionId = result.data?.id;
+      if (!predictionId) throw new Error('No prediction ID returned');
+      if (queueJob) {
+        queueJob.predictionId = predictionId;
+        await persistGenerationQueue();
+      }
+    }
+    const outputs = await pollPrediction(predictionId, 240, queueJob);
 
     skeletonNodes.forEach(s => s.remove());
 
     const timestamp = new Date().toLocaleTimeString();
-    const ts = Date.now();
+    const ts = queueJob?.startedAt || Date.parse(queueJob?.createdAt || '') || Date.now();
+    if (queueJob && !queueJob.startedAt) queueJob.startedAt = ts;
     const predictionToken = String(predictionId).replace(/[^a-zA-Z0-9_-]/g, '-').slice(-48) || String(ts);
     let savedCount = 0;
 
     // Save all outputs to server first, get local URLs
     const localOutputs = await Promise.all(outputs.map(async (u, i) => {
       const fname = `img-${ts}-${predictionToken}-${i}-${model.replace(/[\/:]/g,'-')}.jpg`;
-      return await saveOutputToServer(u, fname, prompt);
+      return await saveOutputToServer(u, fname, prompt, { mode: 'image', model, settings: { ...settings, refImages: rawRefs.map(ref => ({ src: getRefSrc(ref), name: ref.name || '' })) }, predictionId, createdAt: new Date(ts).toISOString() });
     }));
 
     for (const localUrl of localOutputs) {
@@ -5096,6 +5274,7 @@ async function generateImage(prompt, settings) {
       time: timestamp,
       outputs: localOutputs,
       predictionId,
+      settings: { ...settings, refImages: rawRefs.map(ref => ({ src: getRefSrc(ref), name: ref.name || '' })) },
     };
     history.unshift(histItem);
     if (history.length > 50) history.pop();
@@ -5112,8 +5291,9 @@ async function generateImage(prompt, settings) {
   }
 }
 
-async function generateVideo(prompt, settings) {
+async function generateVideo(prompt, settings, queueJob = null) {
   const { model, aspectRatio, duration, generateAudio, cameraFixed, refImages: rawRefs } = settings;
+  if (queueJob?.predictionId && history.some(item => String(item.predictionId) === String(queueJob.predictionId))) return;
   const jobRefs = await prepareJobRefs(rawRefs);
   const isI2V = model.includes('i2v') || model.includes('image-to-video');
 
@@ -5134,29 +5314,36 @@ async function generateVideo(prompt, settings) {
     const body = { model, prompt, aspect_ratio: aspectRatio, duration, generate_audio: generateAudio, camera_fixed: cameraFixed };
     if (isI2V && jobRefs.length) body.image = jobRefs[0].dataUrl;
 
-    const resp = await fetch('https://api.atlascloud.ai/api/v1/model/generateVideo', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify(body),
-    });
-    const result = await resp.json();
-    if (!resp.ok) { const e = new Error(result.message || result.error || `HTTP ${resp.status}`); e.raw = JSON.stringify(result); throw e; }
-
-    const predictionId = result.data?.id;
-    if (!predictionId) throw new Error('No prediction ID returned');
-    const outputs = await pollPrediction(predictionId, 240);
+    let predictionId = queueJob?.predictionId || '';
+    if (!predictionId) {
+      const resp = await fetch('https://api.atlascloud.ai/api/v1/model/generateVideo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+      });
+      const result = await resp.json();
+      if (!resp.ok) { const e = new Error(result.message || result.error || `HTTP ${resp.status}`); e.raw = JSON.stringify(result); throw e; }
+      predictionId = result.data?.id;
+      if (!predictionId) throw new Error('No prediction ID returned');
+      if (queueJob) {
+        queueJob.predictionId = predictionId;
+        await persistGenerationQueue();
+      }
+    }
+    const outputs = await pollPrediction(predictionId, 240, queueJob);
 
     if (skeletonNode) skeletonNode.remove();
 
     const timestamp = new Date().toLocaleTimeString();
-    const ts = Date.now();
+    const ts = queueJob?.startedAt || Date.parse(queueJob?.createdAt || '') || Date.now();
+    if (queueJob && !queueJob.startedAt) queueJob.startedAt = ts;
     const predictionToken = String(predictionId).replace(/[^a-zA-Z0-9_-]/g, '-').slice(-48) || String(ts);
     let savedCount = 0;
 
     // Save videos to server
     const localOutputs = await Promise.all(outputs.map(async (u, i) => {
       const fname = `vid-${ts}-${predictionToken}-${i}-${model.replace(/[\/:]/g,'-')}.mp4`;
-      return await saveOutputToServer(u, fname, prompt);
+      return await saveOutputToServer(u, fname, prompt, { mode: 'video', model, settings: { ...settings, refImages: rawRefs.map(ref => ({ src: getRefSrc(ref), name: ref.name || '' })) }, predictionId, createdAt: new Date(ts).toISOString() });
     }));
 
     for (const localUrl of localOutputs) {
@@ -5191,6 +5378,7 @@ async function generateVideo(prompt, settings) {
       time: timestamp,
       outputs: localOutputs,
       predictionId,
+      settings: { ...settings, refImages: rawRefs.map(ref => ({ src: getRefSrc(ref), name: ref.name || '' })) },
     };
     history.unshift(histItem);
     if (history.length > 50) history.pop();
@@ -5207,10 +5395,11 @@ async function generateVideo(prompt, settings) {
   }
 }
 
-async function pollPrediction(id, maxWaitSecs = 240) {
+async function pollPrediction(id, maxWaitSecs = 240, queueJob = null) {
   const url = `https://api.atlascloud.ai/api/v1/model/prediction/${id}`;
   const maxIterations = Math.ceil(maxWaitSecs / 2);
   for (let i = 0; i < maxIterations; i++) {
+    if (queueJob?.status === 'canceled') throw new Error('Generation canceled');
     await sleep(2000);
     const resp = await fetch(url, {
       headers: { 'Authorization': `Bearer ${apiKey}` }
@@ -5220,6 +5409,7 @@ async function pollPrediction(id, maxWaitSecs = 240) {
     if (data.status === 'completed') {
       return data.outputs || [];
     } else if (data.status === 'failed') {
+      if (queueJob) queueJob.atlasFailed = true;
       throw new Error(data.error || 'Generation failed');
     }
   }
@@ -5590,6 +5780,8 @@ function saveData() {
     { key: 'atlasFolders', value: JSON.stringify(folders) },
     { key: 'atlasReferenceGroups', value: JSON.stringify(referenceGroups) },
     { key: 'atlasHistory', value: JSON.stringify(lightHistory) },
+    { key: 'atlasFavorites', value: JSON.stringify(favorites) },
+    { key: 'atlasWorkflowPresets', value: JSON.stringify(workflowPresets) },
   ]);
   scheduleWorkspaceSave();
 }
@@ -5615,6 +5807,7 @@ function openDataManager() {
     <div class="dm-stat"><div class="dm-stat-val">${referenceGroups.length}</div><div class="dm-stat-label">Reference Groups</div></div>
   `;
   document.getElementById('dataManagerModal').classList.add('show');
+  loadServerBackups();
 }
 
 function buildExportPayload(what = 'all') {
@@ -5630,6 +5823,8 @@ function buildExportPayload(what = 'all') {
   if (what === 'all') {
     payload.apiKey = apiKey;
     payload.history = history;
+    payload.favorites = favorites;
+    payload.workflowPresets = workflowPresets;
   }
   return payload;
 }
@@ -5710,6 +5905,8 @@ function applyImport(data, mode) {
     if (data.folders) folders = data.folders;
     referenceGroups = normalizeReferenceGroups(data.referenceGroups || []);
     if (data.history) history = data.history;
+    favorites = normalizeFavorites(data.favorites);
+    workflowPresets = normalizeWorkflowPresets(data.workflowPresets);
     if (data.apiKey) {
       apiKey = data.apiKey;
       document.getElementById('apiKeyInput').value = apiKey;
@@ -5752,6 +5949,14 @@ function applyImport(data, mode) {
         addedGroups++;
       }
     }
+    const importedFavorites = normalizeFavorites(data.favorites);
+    favorites = normalizeFavorites({
+      prompts: [...favorites.prompts, ...importedFavorites.prompts],
+      groups: [...favorites.groups, ...importedFavorites.groups],
+    });
+    for (const preset of normalizeWorkflowPresets(data.workflowPresets)) {
+      if (!workflowPresets.some(item => item.name.toLowerCase() === preset.name.toLowerCase())) workflowPresets.push(preset);
+    }
     showToast(`Merged: +${addedPrompts} prompts, +${addedFolders} folders, +${addedGroups} groups`, 'success');
   }
 
@@ -5761,13 +5966,14 @@ function applyImport(data, mode) {
   renderFolders();
   renderReferenceGroups();
   renderHistory();
+  renderWorkflowPresets();
   _pendingImport = null;
   closeModal('dataManagerModal');
 }
 
 async function clearAllData() {
   if (!confirm('Delete ALL data — prompts, folders, history, API key? This cannot be undone.')) return;
-  prompts = []; promptFolders = []; folders = []; referenceGroups = []; history = []; apiKey = ''; xaiAuthToken = '';
+  prompts = []; promptFolders = []; folders = []; referenceGroups = []; history = []; workflowPresets = []; favorites = normalizeFavorites(null); apiKey = ''; xaiAuthToken = '';
   xaiPromptCategories = normalizeXaiPromptCategories(null);
   selectedXaiPromptKeywords.clear();
   editingXaiPromptCategoryIds.clear();
@@ -5778,9 +5984,9 @@ async function clearAllData() {
   promptFolderStateInitialized = false;
   referenceFolderStateInitialized = false;
   await Promise.all([
-    serverDel('atlasApiKey'), serverDel('xaiAuthToken'), serverDel('xaiPromptCategories'), serverDel('atlasOutputPrompts'), serverDel('atlasPrompts'),
+    serverDel('atlasApiKey'), serverDel('xaiAuthToken'), serverDel('xaiPromptCategories'), serverDel('atlasOutputPrompts'), serverDel('atlasOutputMeta'), serverDel('atlasPrompts'),
     serverDel('atlasPromptFolders'),
-    serverDel('atlasFolders'), serverDel('atlasReferenceGroups'), serverDel('atlasHistory'),
+    serverDel('atlasFolders'), serverDel('atlasReferenceGroups'), serverDel('atlasHistory'), serverDel('atlasFavorites'), serverDel('atlasWorkflowPresets'), serverDel('atlasGenerationQueue'),
   ]);
   document.getElementById('apiKeyInput').value = '';
   const settingsAtlasEl = document.getElementById('settingsAtlasKeyInput');

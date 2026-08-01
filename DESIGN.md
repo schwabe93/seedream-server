@@ -126,6 +126,34 @@ All spacing uses a 4px base unit.
 - **Accessibility**: disabled legacy actions explain why no prompt exists; successful copy is announced through a live region.
 - **Mobile behavior**: when clipboard access is blocked on plain HTTP, the full prompt opens selected in a readable fallback dialog.
 
+### Library Search And Favorites
+
+- **Structure**: synchronized search controls in prompt and reference panels, plus independent favorite actions on prompts and reference groups.
+- **Behavior**: search matches folder names, prompt names/text, reference names, and group names; favorites sort before other entries and synchronize through the server.
+- **Mobile behavior**: search, clear, and favorite controls use 44px targets.
+
+### Workflow Presets
+
+- **Structure**: compact selector with Save and Delete actions above generation settings.
+- **Behavior**: restores mode, model, controls, prompt, and ordered references as one reusable workflow.
+- **Persistence**: presets synchronize through the server and are included in full exports.
+
+### Durable Generation Queue
+
+- **States**: queued, running, done, error, canceled, and remote-device ownership.
+- **Behavior**: stores Atlas prediction IDs, resumes polling after refresh, supports retry/cancel, and requires explicit takeover on another device.
+- **Concurrency**: at most three jobs owned by the current browser run simultaneously.
+
+### Enhanced Gallery
+
+- **Structure**: search and type/album/favorite filters, selectable cards, bulk toolbar, and per-output actions.
+- **Behavior**: favorites and albums persist as output metadata; prompt/settings can return to Studio or regenerate; selected outputs can be downloaded, moved, or deleted together.
+
+### Server Backups
+
+- **Behavior**: one daily full snapshot plus manual snapshots, seven-version retention, and a safety snapshot before restore.
+- **Scope**: store, generated outputs, and uploaded references.
+
 ## 6. Motion & Interaction
 
 | Type | Duration | Easing | Usage |

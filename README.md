@@ -1,156 +1,89 @@
-# 🎨 Seedream Studio — Local Network Server
+# Seedream Studio Server
 
-Self-hosted server for Seedream Studio. All prompts, folders, reference images, and history are stored in SQLite on your Ubuntu server and shared across every device on your home network.
+Self-hosted image and video generation workspace for Atlas Cloud with shared prompts, references, queue, history, gallery, xAI prompt assistance, and server backups.
 
----
+## Requirements
 
-## Quick Setup (Ubuntu Server)
+- Ubuntu or another Linux server
+- Node.js 18 or newer
+- Atlas Cloud API key
+- Optional xAI API token
 
-### Step 1 — Copy files to your server
-
-From your PC, open a terminal and run:
-
-```bash
-scp -r seedream-studio-server/ your-user@YOUR_SERVER_IP:~/
-```
-
-Or if you're already on the server, just place the folder anywhere (e.g. `~/seedream-studio-server/`).
-
-### Step 2 — Run the setup script
-
-SSH into your server, then:
+## Install
 
 ```bash
-cd ~/seedream-studio-server
+git clone https://github.com/schwabe93/seedream-server.git
+cd seedream-server
 chmod +x setup.sh
 ./setup.sh
 ```
 
-This will:
-- Install Node.js 20 (if not already installed)
-- Install npm dependencies (`better-sqlite3`)
-- Copy files to `~/seedream-studio/`
-- Create a **systemd service** that starts automatically on boot
-- Open port `7842` in ufw firewall
+Open `http://SERVER-IP:7842` from a device on the same network.
 
-### Step 3 — Open in your browser
-
-The setup script will print your server's local IP, e.g.:
-
-```
-→ http://192.168.1.100:7842
-```
-
-Open that URL on **any device on your home WiFi** — PC, phone, tablet. All data is shared instantly.
-
----
-
-## File Structure
-
-```
-seedream-studio-server/
-├── server.js          ← Node.js backend (HTTP + SQLite API)
-├── package.json
-├── setup.sh           ← One-time setup script
-├── public/
-│   └── index.html     ← The full app (server-aware version)
-└── data/
-    └── studio.db      ← SQLite database (auto-created)
-```
-
----
-
-## Managing the Service
+## Update
 
 ```bash
-# Check status
-systemctl status seedream-studio
-
-# View live logs
-journalctl -u seedream-studio -f
-
-# Restart after updating index.html
-systemctl restart seedream-studio
-
-# Stop
-systemctl stop seedream-studio
-
-# Disable auto-start
-systemctl disable seedream-studio
+cd ~/seedream-server
+./deploy.sh
 ```
 
----
-
-## Updating the App
-
-When a new `index.html` is available:
+If the repository is installed elsewhere:
 
 ```bash
-# Copy new file to server
-scp index.html your-user@YOUR_SERVER_IP:~/seedream-studio/public/
-
-# Restart (optional — static files are read on each request)
-systemctl restart seedream-studio
+cd /path/to/seedream-server
+git pull --ff-only
+npm ci --omit=dev
+sudo systemctl restart seedream-studio
 ```
 
-No data is lost — the SQLite database is untouched.
+## Data
 
----
+Runtime data is stored below `data/` and is excluded from Git:
 
-## Manual Start (without systemd)
+| Path | Contents |
+|---|---|
+| `data/store.json` | Prompts, folders, settings, queue, history, favorites, presets, and metadata |
+| `data/refs/` | Uploaded reference images |
+| `data/outputs/` | Generated images and videos |
+| `data/backups/` | Daily and manual complete server snapshots |
 
-```bash
-cd ~/seedream-studio
-node server.js
+The server uses atomic JSON writes. Existing installations require no database migration.
+
+## Backups
+
+The server creates one automatic snapshot per day and retains the newest seven snapshots by default. Backups include `store.json`, reference files, and outputs. Create and restore snapshots from Data Manager.
+
+Change retention in the systemd service if required:
+
+```ini
+Environment=SEEDREAM_BACKUP_RETENTION=14
 ```
 
----
-
-## Storage Details
-
-| Data | Where stored |
-|------|-------------|
-| API key | SQLite `store` table, key `atlasApiKey` |
-| Prompts | SQLite, key `atlasPrompts` |
-| Folders + images | SQLite, key `atlasFolders` (base64 images included) |
-| History | SQLite, key `atlasHistory` |
-| Auto-save folder | RAM only (browser File System API — re-pick each session) |
-
-The database file is at `~/seedream-studio/data/studio.db`. Back it up anytime with:
+Then reload and restart:
 
 ```bash
-cp ~/seedream-studio/data/studio.db ~/seedream-studio-backup.db
-```
-
----
-
-## Port
-
-Default port: **7842**. To change it:
-
-```bash
-# Edit the service file
-sudo nano /etc/systemd/system/seedream-studio.service
-# Change: Environment=PORT=7842
-
 sudo systemctl daemon-reload
 sudo systemctl restart seedream-studio
-sudo ufw allow YOUR_NEW_PORT/tcp
 ```
 
----
+## Service Commands
 
-## Troubleshooting
+```bash
+sudo systemctl status seedream-studio
+sudo systemctl restart seedream-studio
+sudo journalctl -u seedream-studio -f
+```
 
-**Can't connect from phone?**
-- Make sure phone is on the same WiFi
-- Check firewall: `sudo ufw status` — port 7842 should show ALLOW
-- Try `curl http://YOUR_SERVER_IP:7842/api/health` from server
+## Tests
 
-**Service won't start?**
-- Check logs: `journalctl -u seedream-studio -n 50`
-- Verify Node.js: `node --version` (needs v18+)
+```bash
+npm install
+npm run smoke:install
+npm run smoke
+```
 
-**Data not syncing?**
-- Hard-refresh the browser (Ctrl+Shift+R)
-- Check the 💾 dot in the header — it turns green when connected to the server
+The smoke test runs against an isolated temporary data directory and does not modify production data.
+
+## Architecture
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for storage keys, module boundaries, queue recovery, and backup behavior.
