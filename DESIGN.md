@@ -111,6 +111,7 @@ All spacing uses a 4px base unit.
 - **States**: default, hover/focus, generator dialog open.
 - **Accessibility**: exposes a dialog relationship and keeps a 44px mobile target.
 - **Behavior**: carries the current generation prompt into the generator and focuses the idea field.
+- **Idea field**: an inline clear action removes the carried-over idea without changing the generation prompt and returns focus to the field.
 
 ### Prompt Keyword Editor
 

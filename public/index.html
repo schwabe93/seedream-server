@@ -860,6 +860,27 @@
     resize: vertical; min-height: 80px; margin-bottom: 16px;
   }
   .modal-textarea:focus { border-color: var(--accent); }
+  .xai-idea-wrap { position: relative; }
+  .xai-idea-wrap .modal-textarea { padding-right: 50px; }
+  .xai-idea-clear {
+    align-items: center;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--muted);
+    cursor: pointer;
+    display: flex;
+    font-size: 13px;
+    height: 34px;
+    justify-content: center;
+    line-height: 1;
+    position: absolute;
+    right: 8px;
+    top: 8px;
+    width: 34px;
+  }
+  .xai-idea-clear:hover,
+  .xai-idea-clear:focus-visible { border-color: var(--danger); color: var(--danger); }
   .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
   .prompt-builder {
     display: grid;
@@ -1679,11 +1700,13 @@
     .xai-quick-btn,
     .prompt-keyword-edit,
     .prompt-category-delete,
+    .xai-idea-clear,
     .prompt-chip-delete {
       min-height: 44px;
     }
 
     .prompt-category-delete,
+    .xai-idea-clear,
     .prompt-chip-delete {
       min-width: 44px;
     }
@@ -2338,7 +2361,10 @@
     <h3 id="xaiPromptGeneratorTitle">xAI Prompt Generator</h3>
     <div class="prompt-builder-hint">Select details for the prompt. Use <strong>Edit keywords</strong> inside a category to remove saved keywords.</div>
     <div class="prompt-reference-builder" id="xaiReferenceBuilder" onclick="handleXaiPromptBuilderClick(event)"></div>
-    <textarea class="modal-textarea" id="xaiPromptIdea" placeholder="Short idea, scene, product, character, mood..." rows="5"></textarea>
+    <div class="xai-idea-wrap">
+      <textarea class="modal-textarea" id="xaiPromptIdea" placeholder="Short idea, scene, product, character, mood..." rows="5"></textarea>
+      <button type="button" class="xai-idea-clear" id="xaiPromptIdeaClear" onclick="clearXaiPromptIdea()" title="Clear idea" aria-label="Clear xAI prompt idea">&#10005;</button>
+    </div>
     <div class="prompt-category-row">
       <input class="modal-input" id="xaiNewCategoryInput" style="margin:0" placeholder="New category name..." onkeydown="if(event.key==='Enter'){event.preventDefault();addXaiPromptCategory()}">
       <button class="btn-secondary" onclick="addXaiPromptCategory()">Add Category</button>
@@ -3557,6 +3583,13 @@ function openPromptGeneratorModal(syncCurrentPrompt = false) {
 
 function useCurrentPromptAsIdea() {
   document.getElementById('xaiPromptIdea').value = document.getElementById('promptTextarea').value.trim();
+}
+
+function clearXaiPromptIdea() {
+  const idea = document.getElementById('xaiPromptIdea');
+  if (!idea) return;
+  idea.value = '';
+  idea.focus();
 }
 
 function currentTargetModelLabel() {

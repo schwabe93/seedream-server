@@ -239,6 +239,15 @@ async function main() {
     await page.click('#xaiQuickButton');
     await page.waitForFunction(() => document.querySelector('#promptGeneratorModal')?.classList.contains('show'));
     assert(await page.inputValue('#xaiPromptIdea') === 'Quick xAI seed from the generator', 'xAI quick action did not carry over the current prompt');
+    const xaiIdeaClearMetrics = await page.locator('#xaiPromptIdeaClear').evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    });
+    assert(xaiIdeaClearMetrics.width >= 44 && xaiIdeaClearMetrics.height >= 44, `xAI idea clear action is too small on mobile: ${JSON.stringify(xaiIdeaClearMetrics)}`);
+    await page.click('#xaiPromptIdeaClear');
+    assert(await page.inputValue('#xaiPromptIdea') === '', 'xAI idea clear action did not empty the previous prompt');
+    assert(await page.inputValue('#promptTextarea') === 'Quick xAI seed from the generator', 'Clearing the xAI idea also cleared the generation prompt');
+    assert(await page.evaluate(() => document.activeElement?.id === 'xaiPromptIdea'), 'xAI idea field did not regain focus after clearing');
     const xaiDialogSemantics = await page.evaluate(() => ({
       role: document.getElementById('promptGeneratorModal')?.getAttribute('role'),
       modal: document.getElementById('promptGeneratorModal')?.getAttribute('aria-modal'),
