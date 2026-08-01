@@ -90,6 +90,14 @@ All spacing uses a 4px base unit.
 - **States**: zero selected, selected, pressed.
 - **Mobile behavior**: stays visible while selecting multiple images; Done closes the library and returns to generation.
 
+### Reference Groups
+
+- **Structure**: compact horizontal group rail above the prompt with stacked previews, name, image count, save-current action, and separate delete action.
+- **States**: empty guidance, available, active selection, save dialog, persistence error.
+- **Behavior**: saves the current ordered selection as a named group and replaces active references with all group images in one click; each group is normalized to 10 unique images maximum.
+- **Persistence**: groups synchronize through the server and are included in folder/full backups, imports, and clear-all data.
+- **Accessibility**: applying and deleting are separate named controls; all primary mobile targets are at least 44px.
+
 ### Generation Output Card
 
 - **Structure**: media, metadata, copy, download, delete actions.

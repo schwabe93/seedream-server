@@ -586,6 +586,106 @@
   }
   .ref-label { font-size: 10px; color: var(--muted); }
 
+  .reference-groups {
+    padding: 10px 20px 8px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
+  .reference-groups-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .reference-groups-title {
+    color: var(--muted-strong);
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .reference-group-save {
+    min-height: 32px;
+    padding: 5px 10px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: #6d28d914;
+    color: var(--glow);
+    cursor: pointer;
+    font-family: var(--sans);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .reference-group-save:disabled { cursor: default; opacity: 0.4; }
+  .reference-group-list {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 1px 1px 4px;
+    scrollbar-width: thin;
+  }
+  .reference-group-card {
+    display: flex;
+    flex: 0 0 auto;
+    min-width: 174px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card);
+    overflow: hidden;
+  }
+  .reference-group-card.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px #6d28d933 inset;
+  }
+  .reference-group-apply {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    gap: 8px;
+    min-width: 0;
+    padding: 7px 9px;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+  }
+  .reference-group-card.active .reference-group-apply { color: var(--glow); }
+  .reference-group-preview { display: flex; flex: 0 0 auto; }
+  .reference-group-preview img,
+  .reference-group-preview-placeholder {
+    width: 26px;
+    height: 26px;
+    border: 1px solid var(--surface);
+    border-radius: 6px;
+    background: var(--bg);
+    object-fit: cover;
+  }
+  .reference-group-preview img + img { margin-left: -9px; }
+  .reference-group-copy { min-width: 0; }
+  .reference-group-name {
+    display: block;
+    overflow: hidden;
+    font-size: 11px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .reference-group-count { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; }
+  .reference-group-delete {
+    width: 34px;
+    border: 0;
+    border-left: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .reference-group-delete:hover { background: #ef444410; color: var(--danger); }
+  .reference-group-empty { color: var(--muted); font-size: 10px; line-height: 1.5; }
+
   /* RIGHT PANEL */
   .right-panel {
     position: fixed;
@@ -1502,6 +1602,13 @@
       padding: 0 12px 8px !important;
     }
 
+    .reference-groups { padding: 9px 12px 8px; }
+    .reference-group-save,
+    .reference-group-apply,
+    .reference-group-delete { min-height: 44px; }
+    .reference-group-delete { width: 44px; }
+    .reference-group-card { min-width: min(220px, calc(100vw - 48px)); }
+
     .output-grid {
       grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
       gap: 10px;
@@ -1735,6 +1842,15 @@
     </div>
     <div class="output-grid" id="outputGrid" style="display:none"></div>
   </div>
+
+  <!-- Saved reference groups -->
+  <section class="reference-groups" id="referenceGroups" aria-labelledby="referenceGroupsTitle">
+    <div class="reference-groups-head">
+      <span class="reference-groups-title" id="referenceGroupsTitle">Reference groups</span>
+      <button class="reference-group-save" id="saveReferenceGroupButton" onclick="openReferenceGroupModal()" disabled>+ Save current</button>
+    </div>
+    <div class="reference-group-list" id="referenceGroupList"></div>
+  </section>
 
   <!-- Reference images strip -->
   <div id="refStrip" style="padding:0 20px 6px;display:none;">
@@ -1991,6 +2107,19 @@
   </div>
 </div>
 
+<!-- SAVE REFERENCE GROUP MODAL -->
+<div class="modal-overlay" id="referenceGroupModal" role="dialog" aria-modal="true" aria-labelledby="referenceGroupModalTitle">
+  <div class="modal">
+    <h3 id="referenceGroupModalTitle">Save Reference Group</h3>
+    <p id="referenceGroupModalHint" style="font-size:11px;color:var(--muted);line-height:1.5;margin:-6px 0 12px"></p>
+    <input class="modal-input" id="referenceGroupNameInput" maxlength="60" placeholder="Group name..." onkeydown="if(event.key==='Enter'){event.preventDefault();confirmSaveReferenceGroup()}">
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal('referenceGroupModal')">Cancel</button>
+      <button class="btn-primary" id="confirmReferenceGroupButton" onclick="confirmSaveReferenceGroup()">Save Group</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="promptFolderModal">
   <div class="modal">
     <h3>New Prompt Folder</h3>
@@ -2033,7 +2162,7 @@
     <div class="dm-grid" id="dmStats"></div>
 
     <div class="dm-info-box">
-      ✓ Exports include: API key, all saved prompts, all reference folders + images, and generation history.<br>
+      ✓ Exports include: API key, all saved prompts, reference folders + images, reference groups, and generation history.<br>
       ✓ Reference images are embedded as base64 — the file is fully self-contained.<br>
       ✓ Import on any machine by loading the file back here.
     </div>
@@ -2474,6 +2603,31 @@ function getRefSrc(ref) {
   return String(ref?.src || ref?.dataUrl || '');
 }
 
+function normalizeReferenceGroups(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((group, groupIndex) => {
+    const seen = new Set();
+    const images = (Array.isArray(group?.images) ? group.images : [])
+      .map(image => ({
+        src: getRefSrc(image),
+        dataUrl: image?.dataUrl || '',
+        name: String(image?.name || 'Reference'),
+      }))
+      .filter(image => {
+        const src = getRefSrc(image);
+        if (!src || seen.has(src)) return false;
+        seen.add(src);
+        return true;
+      })
+      .slice(0, 10);
+    return {
+      id: group?.id || makeId(`ref-group-${groupIndex}`),
+      name: String(group?.name || `Group ${groupIndex + 1}`).trim().slice(0, 60) || `Group ${groupIndex + 1}`,
+      images,
+    };
+  }).filter(group => group.images.length > 0);
+}
+
 async function uploadRefFileToServer(file) {
   const q = encodeURIComponent(file.name || 'ref.jpg');
   const resp = await fetch(`${SERVER}/api/upload-ref?filename=${q}`, {
@@ -2537,6 +2691,8 @@ let xaiKeywordDeletePending = false;
 let prompts   = [];
 let promptFolders = [];
 let folders   = [];
+let referenceGroups = [];
+let referenceGroupSavePending = false;
 let history   = [];
 let refImages = [];
 let currentTab = 'generate';
@@ -2704,10 +2860,11 @@ async function startPolling() {
 }
 
 async function syncFromServer() {
-  const [savedPrompts, savedPromptFolders, savedFolders, savedHistory] = await Promise.all([
+  const [savedPrompts, savedPromptFolders, savedFolders, savedReferenceGroups, savedHistory] = await Promise.all([
     serverGet('atlasPrompts', null),
     serverGet('atlasPromptFolders', null),
     serverGet('atlasFolders', null),
+    serverGet('atlasReferenceGroups', []),
     serverGet('atlasHistory', []),
   ]);
 
@@ -2723,6 +2880,15 @@ async function syncFromServer() {
   }
   if (Array.isArray(savedFolders) && JSON.stringify(savedFolders) !== JSON.stringify(folders)) {
     folders = savedFolders;
+    changed = true;
+  }
+  const normalizedSavedReferenceGroups = normalizeReferenceGroups(savedReferenceGroups);
+  if (JSON.stringify(normalizedSavedReferenceGroups) !== JSON.stringify(savedReferenceGroups || [])) {
+    serverSet('atlasReferenceGroups', normalizedSavedReferenceGroups);
+  }
+  if (JSON.stringify(normalizedSavedReferenceGroups) !== JSON.stringify(referenceGroups)) {
+    referenceGroups = normalizedSavedReferenceGroups;
+    renderReferenceGroups();
     changed = true;
   }
   if (Array.isArray(savedHistory) && JSON.stringify(savedHistory) !== JSON.stringify(history)) {
@@ -2801,13 +2967,14 @@ function restoreOutputGrid() {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 async function bootFromServer() {
-  const [savedKey, savedXaiToken, savedXaiPromptCategories, savedPrompts, savedPromptFolders, savedFolders, savedHistory, savedAutosave, savedImageDefaults, savedWorkspace] = await Promise.all([
+  const [savedKey, savedXaiToken, savedXaiPromptCategories, savedPrompts, savedPromptFolders, savedFolders, savedReferenceGroups, savedHistory, savedAutosave, savedImageDefaults, savedWorkspace] = await Promise.all([
     serverGet('atlasApiKey', ''),
     serverGet('xaiAuthToken', ''),
     serverGet('xaiPromptCategories', null),
     serverGet('atlasPrompts', null),
     serverGet('atlasPromptFolders', null),
     serverGet('atlasFolders', null),
+    serverGet('atlasReferenceGroups', []),
     serverGet('atlasHistory', []),
     serverGet('atlasAutosave', '0'),
     serverGet('atlasImageDefaults', null),
@@ -2855,6 +3022,10 @@ async function bootFromServer() {
     await serverSet('atlasFolders', folders);
   }
   ensureReferenceFolderShape();
+  referenceGroups = normalizeReferenceGroups(savedReferenceGroups);
+  if (JSON.stringify(referenceGroups) !== JSON.stringify(savedReferenceGroups || [])) {
+    await serverSet('atlasReferenceGroups', referenceGroups);
+  }
 
   if (!savedWorkspace) {
     const firstPromptRoot = getChildren(promptFolders, null)[0];
@@ -4115,6 +4286,7 @@ async function deleteImageFromFolder(fi, ii) {
   const refIdx = refImages.findIndex(r => getRefSrc(r) === src);
   if (refIdx >= 0) refImages.splice(refIdx, 1);
   folders[fi].images.splice(ii, 1);
+  removeReferenceFromGroups(src);
   if (src.startsWith('/refs/')) {
     const filename = src.split('/').pop();
     try { await fetch(`${SERVER}/api/ref/${encodeURIComponent(filename)}`, { method: 'DELETE' }); } catch {}
@@ -4146,12 +4318,178 @@ function toggleRefImage(fi, ii) {
   scheduleWorkspaceSave();
 }
 
+function sameReferenceSelection(images) {
+  if (!Array.isArray(images) || images.length !== refImages.length) return false;
+  return images.every((image, index) => getRefSrc(image) === getRefSrc(refImages[index]));
+}
+
+function renderReferenceGroups() {
+  const list = document.getElementById('referenceGroupList');
+  const saveButton = document.getElementById('saveReferenceGroupButton');
+  if (!list || !saveButton) return;
+  saveButton.disabled = refImages.length === 0 || refImages.length > 10;
+  list.replaceChildren();
+
+  if (!referenceGroups.length) {
+    const empty = document.createElement('span');
+    empty.className = 'reference-group-empty';
+    empty.textContent = 'Select up to 10 reference images, then save them as a one-click group.';
+    list.appendChild(empty);
+    return;
+  }
+
+  referenceGroups.forEach(group => {
+    const card = document.createElement('div');
+    card.className = `reference-group-card${sameReferenceSelection(group.images) ? ' active' : ''}`;
+
+    const applyButton = document.createElement('button');
+    applyButton.type = 'button';
+    applyButton.className = 'reference-group-apply';
+    applyButton.setAttribute('aria-label', `Use reference group ${group.name} with ${group.images.length} images`);
+    applyButton.onclick = () => applyReferenceGroup(group.id);
+
+    const preview = document.createElement('span');
+    preview.className = 'reference-group-preview';
+    group.images.slice(0, 3).forEach(image => {
+      const img = document.createElement('img');
+      img.src = getRefSrc(image);
+      img.alt = '';
+      preview.appendChild(img);
+    });
+    applyButton.appendChild(preview);
+
+    const copy = document.createElement('span');
+    copy.className = 'reference-group-copy';
+    const name = document.createElement('span');
+    name.className = 'reference-group-name';
+    name.textContent = group.name;
+    const count = document.createElement('span');
+    count.className = 'reference-group-count';
+    count.textContent = `${group.images.length}/10 images`;
+    copy.append(name, count);
+    applyButton.appendChild(copy);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'reference-group-delete';
+    deleteButton.textContent = '✕';
+    deleteButton.title = 'Delete group';
+    deleteButton.setAttribute('aria-label', `Delete reference group ${group.name}`);
+    deleteButton.onclick = () => deleteReferenceGroup(group.id);
+
+    card.append(applyButton, deleteButton);
+    list.appendChild(card);
+  });
+}
+
+function openReferenceGroupModal() {
+  if (!refImages.length) {
+    showToast('Select at least one reference image first', 'error');
+    return;
+  }
+  if (refImages.length > 10) {
+    showToast('A reference group can contain at most 10 images', 'error');
+    return;
+  }
+  const input = document.getElementById('referenceGroupNameInput');
+  input.value = '';
+  document.getElementById('referenceGroupModalHint').textContent = `${refImages.length}/10 selected images will be saved in this group.`;
+  document.getElementById('referenceGroupModal').classList.add('show');
+  requestAnimationFrame(() => input.focus());
+}
+
+async function confirmSaveReferenceGroup() {
+  if (referenceGroupSavePending) return;
+  const input = document.getElementById('referenceGroupNameInput');
+  const name = input.value.trim();
+  if (!name) {
+    showToast('Enter a group name first', 'error');
+    input.focus();
+    return;
+  }
+  if (!refImages.length || refImages.length > 10) {
+    closeModal('referenceGroupModal');
+    showToast('Select between 1 and 10 reference images', 'error');
+    return;
+  }
+  if (referenceGroups.some(group => group.name.toLowerCase() === name.toLowerCase())) {
+    showToast('A reference group with this name already exists', 'error');
+    return;
+  }
+
+  referenceGroupSavePending = true;
+  const button = document.getElementById('confirmReferenceGroupButton');
+  button.disabled = true;
+  const group = normalizeReferenceGroups([{
+    id: makeId('ref-group'),
+    name: name.slice(0, 60),
+    images: refImages.slice(0, 10).map(image => ({
+      src: getRefSrc(image),
+      dataUrl: image.dataUrl || '',
+      name: image.name || 'Reference',
+    })),
+  }])[0];
+  referenceGroups.push(group);
+  renderReferenceGroups();
+  const saved = await serverSet('atlasReferenceGroups', referenceGroups);
+  referenceGroupSavePending = false;
+  button.disabled = false;
+  if (!saved) {
+    referenceGroups = referenceGroups.filter(item => item.id !== group.id);
+    renderReferenceGroups();
+    showToast('Reference group could not be saved', 'error');
+    return;
+  }
+  closeModal('referenceGroupModal');
+  showToast(`Reference group “${group.name}” saved`, 'success');
+}
+
+function applyReferenceGroup(id) {
+  const group = referenceGroups.find(item => String(item.id) === String(id));
+  if (!group) return;
+  refImages = group.images.slice(0, 10).map(image => ({
+    src: getRefSrc(image),
+    dataUrl: image.dataUrl || '',
+    name: image.name || 'Reference',
+  }));
+  renderFolders();
+  renderRefStrip();
+  scheduleWorkspaceSave();
+  showToast(`${group.name}: ${refImages.length} references selected`, 'success');
+}
+
+async function deleteReferenceGroup(id) {
+  const group = referenceGroups.find(item => String(item.id) === String(id));
+  if (!group || !confirm(`Delete reference group "${group.name}"?`)) return;
+  const previous = referenceGroups;
+  referenceGroups = referenceGroups.filter(item => String(item.id) !== String(id));
+  renderReferenceGroups();
+  if (await serverSet('atlasReferenceGroups', referenceGroups)) {
+    showToast('Reference group deleted', 'success');
+    return;
+  }
+  referenceGroups = previous;
+  renderReferenceGroups();
+  showToast('Reference group could not be deleted', 'error');
+}
+
+function removeReferenceFromGroups(src) {
+  let changed = false;
+  referenceGroups = referenceGroups.map(group => {
+    const images = group.images.filter(image => getRefSrc(image) !== src);
+    if (images.length !== group.images.length) changed = true;
+    return { ...group, images };
+  }).filter(group => group.images.length > 0);
+  return changed;
+}
+
 function renderRefStrip() {
   const strip = document.getElementById('refStrip');
   const inner = document.getElementById('refImagesStrip');
   const summary = document.getElementById('refSummary');
 
   updateMobileReferenceActions();
+  renderReferenceGroups();
 
   // Clear previous content safely
   while (inner.firstChild) inner.removeChild(inner.firstChild);
@@ -4755,16 +5093,19 @@ function switchTab(tab, el) {
   const empty = document.getElementById('emptyState');
   const promptBar = document.getElementById('promptBar');
   const refStrip = document.getElementById('refStrip');
+  const referenceGroupsEl = document.getElementById('referenceGroups');
 
   if (tab === 'history') {
     promptBar.style.display = 'none';
     refStrip.style.display = 'none';
+    referenceGroupsEl.style.display = 'none';
     renderCenterHistory();
     scheduleWorkspaceSave();
     return;
   }
 
   promptBar.style.display = '';
+  referenceGroupsEl.style.display = '';
   if (refImages.length) refStrip.style.display = 'block';
   else refStrip.style.display = 'none';
   empty.querySelector('.empty-title').textContent = currentMode === 'video' ? 'Ready to generate video' : 'Ready to generate';
@@ -4976,6 +5317,7 @@ function saveData() {
     { key: 'atlasPrompts', value: JSON.stringify(prompts) },
     { key: 'atlasPromptFolders', value: JSON.stringify(promptFolders) },
     { key: 'atlasFolders', value: JSON.stringify(folders) },
+    { key: 'atlasReferenceGroups', value: JSON.stringify(referenceGroups) },
     { key: 'atlasHistory', value: JSON.stringify(lightHistory) },
   ]);
   scheduleWorkspaceSave();
@@ -4993,25 +5335,27 @@ function openDataManager() {
   // Refresh stats
   const statsEl = document.getElementById('dmStats');
   const folderImgCount = folders.reduce((a, f) => a + f.images.length, 0);
-  const storageKb = Math.round(JSON.stringify({prompts, promptFolders, folders, history}).length / 1024);
+  const storageKb = Math.round(JSON.stringify({prompts, promptFolders, folders, referenceGroups, history}).length / 1024);
   statsEl.innerHTML = `
     <div class="dm-stat"><div class="dm-stat-val">${prompts.length}</div><div class="dm-stat-label">Saved Prompts</div></div>
     <div class="dm-stat"><div class="dm-stat-val">${promptFolders.length}</div><div class="dm-stat-label">Prompt Folders</div></div>
     <div class="dm-stat"><div class="dm-stat-val">${folders.length}</div><div class="dm-stat-label">Folders</div></div>
     <div class="dm-stat"><div class="dm-stat-val">${folderImgCount}</div><div class="dm-stat-label">Reference Images</div></div>
+    <div class="dm-stat"><div class="dm-stat-val">${referenceGroups.length}</div><div class="dm-stat-label">Reference Groups</div></div>
   `;
   document.getElementById('dataManagerModal').classList.add('show');
 }
 
 function buildExportPayload(what = 'all') {
   const payload = {
-    _version: 1,
+    _version: 2,
     _app: 'SeedreamStudio',
     _exported: new Date().toISOString(),
   };
   if (what === 'all' || what === 'prompts') payload.prompts = prompts;
   if (what === 'all' || what === 'prompts') payload.promptFolders = promptFolders;
   if (what === 'all' || what === 'folders') payload.folders = folders;
+  if (what === 'all' || what === 'folders') payload.referenceGroups = referenceGroups;
   if (what === 'all') {
     payload.apiKey = apiKey;
     payload.history = history;
@@ -5093,6 +5437,7 @@ function applyImport(data, mode) {
     if (data.prompts) prompts = data.prompts;
     if (data.promptFolders) promptFolders = data.promptFolders;
     if (data.folders) folders = data.folders;
+    referenceGroups = normalizeReferenceGroups(data.referenceGroups || []);
     if (data.history) history = data.history;
     if (data.apiKey) {
       apiKey = data.apiKey;
@@ -5102,7 +5447,7 @@ function applyImport(data, mode) {
     showToast('Data replaced from import!', 'success');
   } else {
     // Merge: add prompts/folders not already present (by name)
-    let addedPrompts = 0, addedFolders = 0;
+    let addedPrompts = 0, addedFolders = 0, addedGroups = 0;
     if (data.prompts) {
       for (const p of data.prompts) {
         if (!prompts.find(x => x.name === p.name && x.text === p.text)) {
@@ -5130,13 +5475,20 @@ function applyImport(data, mode) {
         }
       }
     }
-    showToast(`Merged: +${addedPrompts} prompts, +${addedFolders} folders`, 'success');
+    for (const group of normalizeReferenceGroups(data.referenceGroups)) {
+      if (!referenceGroups.some(item => item.name.toLowerCase() === group.name.toLowerCase())) {
+        referenceGroups.push(group);
+        addedGroups++;
+      }
+    }
+    showToast(`Merged: +${addedPrompts} prompts, +${addedFolders} folders, +${addedGroups} groups`, 'success');
   }
 
   ensurePromptFolderShape();
   saveData();
   renderPrompts();
   renderFolders();
+  renderReferenceGroups();
   renderHistory();
   _pendingImport = null;
   closeModal('dataManagerModal');
@@ -5144,7 +5496,7 @@ function applyImport(data, mode) {
 
 async function clearAllData() {
   if (!confirm('Delete ALL data — prompts, folders, history, API key? This cannot be undone.')) return;
-  prompts = []; promptFolders = []; folders = []; history = []; apiKey = ''; xaiAuthToken = '';
+  prompts = []; promptFolders = []; folders = []; referenceGroups = []; history = []; apiKey = ''; xaiAuthToken = '';
   xaiPromptCategories = normalizeXaiPromptCategories(null);
   selectedXaiPromptKeywords.clear();
   editingXaiPromptCategoryIds.clear();
@@ -5157,7 +5509,7 @@ async function clearAllData() {
   await Promise.all([
     serverDel('atlasApiKey'), serverDel('xaiAuthToken'), serverDel('xaiPromptCategories'), serverDel('atlasOutputPrompts'), serverDel('atlasPrompts'),
     serverDel('atlasPromptFolders'),
-    serverDel('atlasFolders'), serverDel('atlasHistory'),
+    serverDel('atlasFolders'), serverDel('atlasReferenceGroups'), serverDel('atlasHistory'),
   ]);
   document.getElementById('apiKeyInput').value = '';
   const settingsAtlasEl = document.getElementById('settingsAtlasKeyInput');

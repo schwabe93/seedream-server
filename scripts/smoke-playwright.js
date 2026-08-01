@@ -402,6 +402,48 @@ async function main() {
     assert(await page.evaluate(() => refImages.length === 2), 'Done did not preserve selected references');
     await page.waitForTimeout(250);
     assert(await page.evaluate(() => document.activeElement?.id === 'studioMenuButton'), 'Done did not restore focus to Library');
+    assert(await page.evaluate(() => normalizeReferenceGroups([{
+      name: 'Limit fixture',
+      images: Array.from({ length: 12 }, (_, index) => ({ src: `/refs/limit-${index}.png`, name: `Limit ${index}` })),
+    }])[0].images.length === 10), 'Imported reference groups are not capped at 10 images');
+
+    const saveGroupMetrics = await page.locator('#saveReferenceGroupButton').evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return { width: rect.width, height: rect.height, disabled: element.disabled };
+    });
+    assert(!saveGroupMetrics.disabled && saveGroupMetrics.height >= 44, `Reference group save action is unavailable on mobile: ${JSON.stringify(saveGroupMetrics)}`);
+    await page.click('#saveReferenceGroupButton');
+    await page.waitForFunction(() => document.querySelector('#referenceGroupModal')?.classList.contains('show'));
+    assert((await page.textContent('#referenceGroupModalHint')).includes('2/10'), 'Reference group modal does not explain its image limit');
+    await page.fill('#referenceGroupNameInput', 'Smoke Duo');
+    await page.click('#confirmReferenceGroupButton');
+    await page.waitForFunction(() => !document.querySelector('#referenceGroupModal')?.classList.contains('show'));
+    await page.waitForSelector('.reference-group-card');
+    await page.waitForFunction(async () => {
+      const response = await fetch('/api/store/atlasReferenceGroups');
+      if (!response.ok) return false;
+      const data = await response.json();
+      const groups = JSON.parse(data.value || '[]');
+      return groups.some(group => group.name === 'Smoke Duo' && group.images?.length === 2);
+    });
+    const groupMetrics = await page.locator('.reference-group-card').evaluate(card => {
+      const apply = card.querySelector('.reference-group-apply').getBoundingClientRect();
+      const remove = card.querySelector('.reference-group-delete').getBoundingClientRect();
+      return { applyHeight: apply.height, deleteWidth: remove.width, deleteHeight: remove.height };
+    });
+    assert(groupMetrics.applyHeight >= 44 && groupMetrics.deleteWidth >= 44 && groupMetrics.deleteHeight >= 44, `Reference group mobile targets are too small: ${JSON.stringify(groupMetrics)}`);
+    await page.evaluate(() => clearRefs());
+    assert(await page.evaluate(() => refImages.length === 0), 'Reference group fixture could not clear active references');
+    await page.click('.reference-group-apply');
+    assert(await page.evaluate(() => refImages.length === 2), 'One-click reference group did not restore all images');
+    assert(await page.locator('.reference-group-card').evaluate(card => card.classList.contains('active')), 'Applied reference group has no active state');
+    assert(await page.evaluate(() => buildExportPayload('folders').referenceGroups?.[0]?.name === 'Smoke Duo'), 'Reference groups are missing from folder backups');
+    const groupCountBeforeDelete = await page.locator('.reference-group-card').count();
+    page.once('dialog', dialog => dialog.dismiss());
+    await page.click('.reference-group-delete');
+    assert(await page.locator('.reference-group-card').count() === groupCountBeforeDelete, 'Dismissed reference group deletion still removed the group');
+    await page.screenshot({ path: path.join(evidenceDir, 'mobile-reference-groups-375.png'), fullPage: false });
+
     const headerState = await page.evaluate(() => {
       const visibleWidth = selector => document.querySelector(selector)?.getBoundingClientRect().width || 0;
       return {
@@ -447,6 +489,11 @@ async function main() {
     assert(desktopPanels.left.width === 320, `Desktop prompt panel width regressed: ${desktopPanels.left.width}`);
     assert(desktopPanels.right.left === 320 && desktopPanels.right.width === 340, `Desktop settings panel regressed: ${JSON.stringify(desktopPanels.right)}`);
     await page.screenshot({ path: path.join(evidenceDir, 'desktop-library-1280.png'), fullPage: false });
+    await page.evaluate(() => closeStudioMenu());
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: path.join(evidenceDir, 'desktop-reference-groups-1280.png'), fullPage: false });
+    await page.click('#studioMenuButton');
+    await page.waitForFunction(() => document.body.classList.contains('menu-open'));
     await page.setViewportSize({ width: 375, height: 812 });
     await page.waitForFunction(() => document.body.matches('.menu-open.mobile-panel-prompts, .menu-open.mobile-panel-references, .menu-open.mobile-panel-settings'));
     assert(await page.evaluate(() => getComputedStyle(document.querySelector('.left-panel')).display === 'flex'), 'Open desktop library disappeared after resizing to mobile');
@@ -476,6 +523,7 @@ async function main() {
     });
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => document.querySelector('#serverDot')?.classList.contains('connected'));
+    await page.waitForFunction(() => referenceGroups.some(group => group.name === 'Smoke Duo' && group.images?.length === 2));
     await page.waitForFunction(expectedPrompt => history.some(item => item.outputs?.includes('/outputs/smoke-output.png') && item.promptFull === expectedPrompt && !item.promptUnavailable), persistentOutputPrompt);
     assert(await page.evaluate(() => getPromptText(history.find(item => item.outputs?.includes('/outputs/smoke-output.png')))) === persistentOutputPrompt, 'History recovery discarded durable output prompt metadata');
 
