@@ -163,6 +163,121 @@
       font: 16px/1.5 Arial, sans-serif;
     }
     .copy-fallback-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%) translateY(16px);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.4;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 150ms ease, transform 150ms ease;
+      z-index: 40;
+      max-width: min(480px, calc(100vw - 24px));
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .toast.error { border-color: var(--danger); color: var(--danger); }
+    .dup-modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: #000000cc;
+      z-index: 25;
+      padding: 16px;
+    }
+    .dup-modal.show { display: flex; }
+    .dup-modal-card {
+      width: min(720px, 100%);
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .dup-modal-card h2 { margin: 0; font-size: 16px; }
+    .dup-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .dup-status { color: var(--muted); font-size: 12px; min-height: 16px; }
+    .dup-groups {
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-right: 4px;
+    }
+    .dup-group {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .dup-group-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .dup-group-title code { color: var(--muted); font-size: 11px; }
+    .dup-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    .dup-file {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+    }
+    .dup-keep {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      color: var(--muted);
+      user-select: none;
+      padding: 8px 6px;
+      min-height: 44px;
+      border-radius: 8px;
+    }
+    .dup-keep input { width: 18px; height: 18px; accent-color: var(--accent); }
+    .dup-thumb {
+      width: 56px;
+      height: 56px;
+      object-fit: cover;
+      border-radius: 6px;
+      background: #000;
+      flex: none;
+    }
+    .dup-file-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .dup-file-name {
+      font-size: 11px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .dup-file-sub { font-size: 10px; color: var(--muted); }
+    .dup-file-prompt {
+      font-size: 11px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     .sr-only {
       position: absolute;
       width: 1px;
@@ -185,6 +300,10 @@
       .info { align-items: flex-start; flex-direction: column; }
       .card-actions { justify-content: flex-start; width: 100%; }
       .card-actions .btn { min-height: 44px; }
+      .dup-modal { padding: 8px; }
+      .dup-modal-card { padding: 12px; }
+      .dup-toolbar .btn, .dup-group-delete { min-height: 44px; }
+      .dup-file { flex-wrap: wrap; }
     }
   </style>
 </head>
@@ -204,7 +323,9 @@
   <div class="bulk-tools">
     <button class="btn" onclick="toggleSelectAllGallery()">Select visible</button>
     <button class="btn" onclick="bulkDownloadGallery()">Download selected</button>
+    <button class="btn" id="galleryZipButton" onclick="downloadZipGallery(this)">Download ZIP</button>
     <button class="btn" onclick="bulkSetGalleryAlbum()">Move to album</button>
+    <button class="btn" onclick="openDuplicatesPanel()">Find duplicates</button>
     <button class="btn" style="color:var(--danger)" onclick="bulkDeleteGallery()">Delete selected</button>
   </div>
   <div class="meta" id="meta">Loading outputs...</div>
@@ -226,7 +347,20 @@
       </div>
     </div>
   </div>
+
+  <div class="dup-modal" id="duplicatesModal" role="dialog" aria-modal="true" aria-labelledby="duplicatesTitle" onclick="if(event.target===this)closeDuplicatesModal()">
+    <div class="dup-modal-card">
+      <h2 id="duplicatesTitle">Duplicate files</h2>
+      <div class="dup-toolbar">
+        <button class="btn primary" id="dupKeepNewestBtn" onclick="deleteDuplicatesKeepNewest()">Keep newest only</button>
+        <button class="btn" onclick="closeDuplicatesModal()">Close</button>
+      </div>
+      <div class="dup-status" id="dupStatus" role="status" aria-live="polite">Opening duplicate finder…</div>
+      <div class="dup-groups" id="dupGroups"></div>
+    </div>
+  </div>
   <div class="sr-only" id="copyStatus" aria-live="polite"></div>
+  <div class="toast" id="galleryToast" role="status" aria-live="polite"></div>
 
   <script src="/gallery-productivity.js"></script>
   <script>
@@ -492,7 +626,8 @@
 
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
-      if (document.getElementById('copyFallback').classList.contains('show')) closeCopyFallback();
+      if (document.getElementById('duplicatesModal').classList.contains('show')) closeDuplicatesModal();
+      else if (document.getElementById('copyFallback').classList.contains('show')) closeCopyFallback();
       else if (document.getElementById('lightbox').classList.contains('show')) closeLightbox();
     });
 

@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const fs    = require('fs');
 const path  = require('path');
 const url   = require('url');
+const zip   = require('./lib/zip');
 
 const PORT        = process.env.PORT || 7842;
 const INSTANCE_TOKEN = process.env.SEEDREAM_INSTANCE_TOKEN || '';
@@ -191,6 +192,11 @@ const EXT_BY_CONTENT_TYPE = {
 
 const OUTPUT_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.webm']);
 
+// ZIP bulk export limits: at most 500 files and 4 GiB - 1 total (ZIP stores
+// sizes as uint32, so 0xFFFFFFFF is the hard ceiling per file and in total).
+const MAX_ZIP_FILES = 500;
+const MAX_ZIP_BYTES = 0xFFFFFFFF;
+
 function makeSafeFilename(baseName, fallbackExt = '.jpg') {
   const parsed = path.parse(baseName || '');
   const base = (parsed.name || 'ref').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'ref';
@@ -241,6 +247,22 @@ function historyPromptText(item) {
   const prompt = String(item?.promptFull || item?.prompt || '').trim();
   if (item?.promptUnavailable || (item?.model === 'Recovered' && prompt === 'Recovered from server output')) return '';
   return prompt;
+}
+
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', reject);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+function sanitizeZipName(raw) {
+  const safe = String(raw || '').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80).trim();
+  if (!safe) return 'outputs.zip';
+  return /\.zip$/i.test(safe) ? safe : safe + '.zip';
 }
 
 function httpCall(method, fullUrl, headers = {}, body = '') {
@@ -480,6 +502,111 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // ── fal.ai proxy (MiniMax H3 Max etc.) ─────────────────────────────────────
+  // The fal key is resolved server-side (store key 'falApiKey' or FAL_KEY env)
+  // and is never exposed to the browser. Endpoints are whitelisted and request
+  // ids sanitized to keep this proxy strictly scoped.
+  const FAL_QUEUE_BASE = 'https://queue.fal.run';
+  const FAL_ENDPOINTS = new Set([
+    'minimax/h3-max/text-to-video',
+    'minimax/h3-max/image-to-video',
+  ]);
+
+  function falKeyFor(body) {
+    return String((body && body.token) || readJsonStore('falApiKey', '') || process.env.FAL_KEY || '').trim();
+  }
+
+  function falEndpointFrom(url) {
+    const endpoint = String(url || '').trim().replace(/^\//, '').replace(/\/+$/, '');
+    return FAL_ENDPOINTS.has(endpoint) ? endpoint : '';
+  }
+
+  function sanitizeRequestId(id) {
+    const safe = String(id || '').replace(/[^a-zA-Z0-9-]/g, '');
+    if (!safe || safe.length > 80) return '';
+    return safe;
+  }
+
+  if (pathname === '/api/fal/submit' && req.method === 'POST') {
+    try {
+      const body = JSON.parse(await readBody(req) || '{}');
+      const endpoint = falEndpointFrom(body.endpoint);
+      if (!endpoint) return jsonResp(res, 400, { error: 'Unknown fal endpoint' });
+      const key = falKeyFor(body);
+      if (!key) return jsonResp(res, 400, { error: 'Missing fal.ai API key' });
+      const payload = body.payload && typeof body.payload === 'object' ? JSON.stringify(body.payload) : '{}';
+      const result = await httpCall('POST', `${FAL_QUEUE_BASE}/${endpoint}`, {
+        'Content-Type': 'application/json',
+        'Authorization': `Key ${key}`,
+      }, payload);
+      if (!result.ok) {
+        let message = 'fal submit failed';
+        try { message = JSON.parse(result.body).detail?.[0]?.msg || JSON.parse(result.body).error || message; } catch {}
+        return jsonResp(res, result.status || 502, { error: message, status: result.status, details: result.body?.slice(0, 1000) || '' });
+      }
+      let data = {};
+      try { data = JSON.parse(result.body || '{}'); } catch {}
+      const requestId = String(data.request_id || data.requestId || data.status_url || '').split('/').pop();
+      if (!requestId) return jsonResp(res, 502, { error: 'fal submit did not return a request id' });
+      return jsonResp(res, 200, { ok: true, requestId });
+    } catch (e) {
+      return jsonResp(res, 400, { error: e.message });
+    }
+  }
+
+  if (pathname.startsWith('/api/fal/status/') && req.method === 'GET') {
+    try {
+      const id = sanitizeRequestId(pathname.slice('/api/fal/status/'.length));
+      if (!id) return jsonResp(res, 400, { error: 'Invalid request id' });
+      const endpoint = falEndpointFrom(new URL(req.url, 'http://x').searchParams.get('endpoint'));
+      if (!endpoint) return jsonResp(res, 400, { error: 'Unknown fal endpoint' });
+      const key = falKeyFor(null);
+      if (!key) return jsonResp(res, 400, { error: 'Missing fal.ai API key' });
+      const result = await httpCall('GET', `${FAL_QUEUE_BASE}/${endpoint}/requests/${id}/status`, { 'Authorization': `Key ${key}` });
+      if (!result.ok) return jsonResp(res, result.status || 502, { error: 'fal status failed', status: result.status });
+      const data = JSON.parse(result.body || '{}');
+      return jsonResp(res, 200, {
+        status: data.status || 'IN_QUEUE',
+        queuePosition: data.queue_position,
+        logs: data.logs,
+      });
+    } catch (e) {
+      return jsonResp(res, 400, { error: e.message });
+    }
+  }
+
+  if (pathname.startsWith('/api/fal/result/') && req.method === 'GET') {
+    try {
+      const id = sanitizeRequestId(pathname.slice('/api/fal/result/'.length));
+      if (!id) return jsonResp(res, 400, { error: 'Invalid request id' });
+      const endpoint = falEndpointFrom(new URL(req.url, 'http://x').searchParams.get('endpoint'));
+      if (!endpoint) return jsonResp(res, 400, { error: 'Unknown fal endpoint' });
+      const key = falKeyFor(null);
+      if (!key) return jsonResp(res, 400, { error: 'Missing fal.ai API key' });
+      const result = await httpCall('GET', `${FAL_QUEUE_BASE}/${endpoint}/requests/${id}`, { 'Authorization': `Key ${key}` });
+      if (!result.ok) return jsonResp(res, result.status || 502, { error: 'fal result failed', status: result.status });
+      return jsonResp(res, 200, JSON.parse(result.body || '{}'));
+    } catch (e) {
+      return jsonResp(res, 400, { error: e.message });
+    }
+  }
+
+  if (pathname === '/api/fal/cancel' && req.method === 'POST') {
+    try {
+      const body = JSON.parse(await readBody(req) || '{}');
+      const id = sanitizeRequestId(body.requestId);
+      const endpoint = falEndpointFrom(body.endpoint);
+      if (!id) return jsonResp(res, 400, { error: 'Invalid request id' });
+      if (!endpoint) return jsonResp(res, 400, { error: 'Unknown fal endpoint' });
+      const key = falKeyFor(body);
+      if (!key) return jsonResp(res, 400, { error: 'Missing fal.ai API key' });
+      const result = await httpCall('POST', `${FAL_QUEUE_BASE}/${endpoint}/requests/${id}/cancel`, { 'Authorization': `Key ${key}` }, '');
+      return jsonResp(res, result.ok ? 200 : (result.status || 502), { ok: result.ok, status: result.status });
+    } catch (e) {
+      return jsonResp(res, 400, { error: e.message });
+    }
+  }
+
   if (pathname === '/api/store-bulk' && req.method === 'POST') {
     try {
       const body      = await readBody(req);
@@ -604,6 +731,42 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // ── Insights statistics for the studio dashboard ───────────────────────────
+  if (pathname === '/api/stats' && req.method === 'GET') {
+    try {
+      const savedMeta = readJsonStore('atlasOutputMeta', {});
+      const outputMeta = savedMeta && typeof savedMeta === 'object' && !Array.isArray(savedMeta) ? savedMeta : {};
+      const byDay = {};
+      const byModel = {};
+      const byKind = { image: 0, video: 0 };
+      const promptCounts = new Map();
+      let totalFiles = 0;
+      let totalBytes = 0;
+      for (const name of fs.readdirSync(OUTPUT_DIR)) {
+        if (!OUTPUT_EXTENSIONS.has(path.extname(name).toLowerCase())) continue;
+        let stat;
+        try { stat = fs.statSync(path.join(OUTPUT_DIR, name)); } catch { continue; }
+        if (!stat.isFile()) continue;
+        totalFiles++;
+        totalBytes += stat.size;
+        const meta = outputMeta[name] || {};
+        const kind = meta.mode === 'video' ? 'video' : 'image';
+        byKind[kind] += 1;
+        const model = String(meta.model || 'unknown').split('/').pop() || 'unknown';
+        byModel[model] = (byModel[model] || 0) + 1;
+        const stamp = new Date(meta.createdAt ? Date.parse(meta.createdAt) : stat.mtimeMs);
+        const day = isNaN(stamp.getTime()) ? new Date(stat.mtimeMs).toISOString().slice(0, 10) : stamp.toISOString().slice(0, 10);
+        byDay[day] = (byDay[day] || 0) + 1;
+        const prompt = String(meta.prompt || '').trim().toLowerCase();
+        if (prompt) promptCounts.set(prompt, (promptCounts.get(prompt) || 0) + 1);
+      }
+      const prompts = [...promptCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([prompt, count]) => ({ prompt, count }));
+      return jsonResp(res, 200, { totalFiles, totalBytes, byDay, byModel, byKind, topPrompts: prompts, generatedAt: new Date().toISOString() });
+    } catch (e) {
+      return jsonResp(res, 500, { error: e.message });
+    }
+  }
+
   // ── Serve saved output files ─────────────────────────────────────────────
   if (pathname.startsWith('/outputs/')) {
     const filename = outputFilename(pathname); // prevent directory traversal
@@ -655,6 +818,129 @@ const server = http.createServer(async (req, res) => {
         .filter(f => /\.(png|jpe?g|webp|gif|mp4|webm)$/i.test(f.name))
         .sort((a, b) => b.mtime - a.mtime);
       return jsonResp(res, 200, { files });
+    } catch (e) {
+      return jsonResp(res, 500, { error: e.message });
+    }
+  }
+
+  // Bulk export of saved outputs as a ZIP archive (stored, method 0).
+  // POST /api/outputs/zip  { files: [names], name?: zipFilename }
+  // Streams the archive directly to the client (no in-memory buffering).
+  // Invalid or missing files are skipped and reported via X-Seedream-Missing.
+  if (pathname === '/api/outputs/zip' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse(await readBody(req) || '{}'); } catch { return jsonResp(res, 400, { error: 'Invalid JSON body' }); }
+
+    const requested = Array.isArray(body.files) ? body.files.map(String).map(s => s.trim()) : [];
+    if (!requested.length) return jsonResp(res, 400, { error: 'No files requested' });
+    if (requested.length > MAX_ZIP_FILES) return jsonResp(res, 400, { error: `Too many files: max ${MAX_ZIP_FILES} per archive` });
+
+    // Sanitize each name to [a-zA-Z0-9._-] and resolve strictly inside OUTPUT_DIR.
+    const entries = [];
+    const missing = [];
+    for (const raw of requested) {
+      const safe = raw.replace(/[^a-zA-Z0-9._-]/g, '_');
+      if (!safe || safe === '.' || safe === '..') { missing.push(raw); continue; }
+      const resolved = path.resolve(OUTPUT_DIR, safe);
+      if (resolved !== path.join(OUTPUT_DIR, safe) || path.basename(resolved) !== safe) {
+        missing.push(raw); // traversal attempt — never include
+        continue;
+      }
+      let stat;
+      try { stat = fs.statSync(resolved); } catch { missing.push(raw); continue; }
+      if (!stat.isFile()) { missing.push(raw); continue; }
+      entries.push({ name: safe, path: resolved, size: stat.size, mtime: stat.mtime });
+    }
+
+    if (!entries.length) {
+      return jsonResp(res, 400, { error: 'None of the requested files could be zipped', missing: missing.slice(0, 50) });
+    }
+
+    const totalBytes = entries.reduce((sum, entry) => sum + entry.size, 0);
+    if (totalBytes > MAX_ZIP_BYTES || entries.some(entry => entry.size > MAX_ZIP_BYTES)) {
+      return jsonResp(res, 400, { error: 'Requested files exceed the 4 GiB ZIP limit' });
+    }
+
+    const zipName = sanitizeZipName(body.name);
+    const headers = {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${zipName}"`,
+      'X-Seedream-Included': String(entries.length),
+      ...CORS,
+    };
+    if (missing.length) {
+      const summary = missing.slice(0, 20).join(', ') + (missing.length > 20 ? ` (+${missing.length - 20} more)` : '');
+      headers['X-Seedream-Missing'] = summary;
+    }
+    res.writeHead(200, headers);
+    try {
+      await zip.streamZip(res, entries);
+    } catch (error) {
+      console.error('zip stream failed:', error.message);
+      if (res.headersSent) return res.destroy();
+      return jsonResp(res, 500, { error: error.message });
+    }
+    return;
+  }
+
+  // Duplicate finder: group outputs by SHA-256 (size buckets first, then hash).
+  // GET /api/duplicates → { groups, scanned, duplicateBytes } (no singletons)
+  if (pathname === '/api/duplicates' && req.method === 'GET') {
+    try {
+      const savedMeta = readJsonStore('atlasOutputMeta', {});
+      const outputMeta = savedMeta && typeof savedMeta === 'object' && !Array.isArray(savedMeta) ? savedMeta : {};
+      const savedPrompts = readJsonStore('atlasOutputPrompts', {});
+      const outputPrompts = savedPrompts && typeof savedPrompts === 'object' && !Array.isArray(savedPrompts) ? savedPrompts : {};
+
+      const bySize = new Map();
+      let scanned = 0;
+      for (const name of fs.readdirSync(OUTPUT_DIR)) {
+        if (!OUTPUT_EXTENSIONS.has(path.extname(name).toLowerCase())) continue;
+        let stat;
+        try { stat = fs.statSync(path.join(OUTPUT_DIR, name)); } catch { continue; }
+        if (!stat.isFile()) continue;
+        scanned++;
+        const bucket = bySize.get(stat.size);
+        if (bucket) bucket.push(name); else bySize.set(stat.size, [name]);
+      }
+
+      const groups = [];
+      let duplicateBytes = 0;
+      for (const [size, names] of bySize) {
+        if (names.length < 2) continue;
+        const byHash = new Map();
+        for (const name of names) {
+          let hash;
+          try { hash = await sha256File(path.join(OUTPUT_DIR, name)); } catch { continue; }
+          const bucket = byHash.get(hash);
+          if (bucket) bucket.push(name); else byHash.set(hash, [name]);
+        }
+        for (const [hash, hashNames] of byHash) {
+          if (hashNames.length < 2) continue;
+          const files = hashNames.map(name => {
+            const meta = outputMeta[name] || {};
+            let stat;
+            try { stat = fs.statSync(path.join(OUTPUT_DIR, name)); } catch { stat = { size, mtimeMs: 0 }; }
+            return {
+              name,
+              size: stat.size,
+              mtime: stat.mtimeMs,
+              meta: {
+                prompt: String(meta.prompt || outputPrompts[name] || ''),
+                model: meta.model || '',
+                mode: meta.mode || '',
+                album: meta.album || '',
+                favorite: Boolean(meta.favorite),
+                createdAt: meta.createdAt || '',
+              },
+            };
+          }).sort((a, b) => a.mtime - b.mtime);
+          duplicateBytes += size * (files.length - 1);
+          groups.push({ hash, size, files });
+        }
+      }
+      groups.sort((a, b) => b.size - a.size);
+      return jsonResp(res, 200, { groups, scanned, duplicateBytes });
     } catch (e) {
       return jsonResp(res, 500, { error: e.message });
     }

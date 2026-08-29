@@ -160,3 +160,177 @@ async function bulkDeleteGallery() {
   selectedGalleryOutputs.clear();
   await loadEnhancedGallery();
 }
+
+// ── ZIP bulk download (streams a stored zip from /api/outputs/zip) ──────────
+let galleryToastTimer = null;
+
+function showGalleryToast(message, isError) {
+  const toast = document.getElementById('galleryToast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.toggle('error', Boolean(isError));
+  toast.classList.add('show');
+  clearTimeout(galleryToastTimer);
+  galleryToastTimer = setTimeout(() => toast.classList.remove('show'), 3500);
+}
+
+function stampZipSuffix() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+async function downloadZipGallery(button) {
+  const selected = [...selectedGalleryOutputs];
+  let files = selected;
+  let label = 'selection';
+  if (!selected.length) {
+    // No explicit selection: export the currently filtered view (max 500).
+    files = filteredGalleryFiles().slice(0, 500).map(file => file.name);
+    label = 'view';
+  }
+  if (!files.length) {
+    showGalleryToast('Nothing to export — select files first.', true);
+    return;
+  }
+  const zipName = `seedream-${label}-${stampZipSuffix()}.zip`;
+  const originalText = button ? button.textContent : '';
+  if (button) { button.disabled = true; button.textContent = 'Zipping…'; }
+  try {
+    const response = await fetch('/api/outputs/zip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files, name: zipName }),
+    });
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`;
+      try { message = (await response.json()).error || message; } catch {}
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    download(url, zipName);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    const skipped = response.headers.get('X-Seedream-Missing')
+      ? Number(response.headers.get('X-Seedream-Included') || 0)
+      : files.length;
+    showGalleryToast(`ZIP queued: ${skipped} files in ${zipName}`);
+  } catch (error) {
+    showGalleryToast(`ZIP export failed: ${error.message}`, true);
+  } finally {
+    if (button) { button.disabled = false; button.textContent = originalText; }
+  }
+}
+
+// ── Duplicate finder ────────────────────────────────────────────────────────
+let duplicateGroups = [];
+
+function openDuplicatesPanel() {
+  document.getElementById('duplicatesModal').classList.add('show');
+  document.getElementById('dupKeepNewestBtn').disabled = true;
+  document.getElementById('dupGroups').innerHTML = '';
+  document.getElementById('dupStatus').textContent = 'Scanning outputs for duplicates…';
+  loadDuplicates();
+}
+
+function closeDuplicatesModal() {
+  document.getElementById('duplicatesModal').classList.remove('show');
+}
+
+function formatBytes(bytes) {
+  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GB';
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+  if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return Math.max(0, bytes) + ' B';
+}
+
+// esc() is defined inline in gallery.html
+
+async function loadDuplicates() {
+  const status = document.getElementById('dupStatus');
+  try {
+    const response = await fetch('/api/duplicates');
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    duplicateGroups = Array.isArray(data.groups) ? data.groups : [];
+    if (!duplicateGroups.length) {
+      status.textContent = `No duplicates found (${data.scanned} files scanned).`;
+      document.getElementById('dupGroups').innerHTML = '';
+      return;
+    }
+    const wasted = formatBytes(data.duplicateBytes || 0);
+    status.textContent = `${duplicateGroups.length} duplicate group(s) found · ${data.scanned} files scanned · ${wasted} reclaimable.`;
+    renderDuplicateGroups();
+  } catch (error) {
+    status.textContent = `Duplicate scan failed: ${error.message}`;
+  }
+}
+
+function renderDuplicateGroups() {
+  const container = document.getElementById('dupGroups');
+  container.innerHTML = duplicateGroups.map((group, gi) => {
+    const rows = group.files.map((file, fi) => {
+      const newest = fi === group.files.length - 1; // files are sorted oldest → newest server-side
+      const date = file.mtime ? new Date(file.mtime).toLocaleString() : 'unknown date';
+      const prompt = file.meta.prompt ? esc(file.meta.prompt.slice(0, 90)) : '';
+      const fav = file.meta.favorite ? ' · ★ favorite' : '';
+      const model = file.meta.model ? ` · ${esc(file.meta.model.split('/').pop())}` : '';
+      return `
+        <label class="dup-file">
+          <span class="dup-keep"><input type="checkbox" checked name="dup-keep-${gi}" value="${esc(file.name)}" ${newest ? 'data-newest="1"' : ''}></span>
+          <img class="dup-thumb" src="/outputs/${encodeURIComponent(file.name)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+          <span class="dup-file-info">
+            <span class="dup-file-name">${esc(file.name)}${newest ? ' <span class="dup-newest">newest</span>' : ''}${fav}</span>
+            <span class="dup-file-sub">${formatBytes(file.size)} · ${date}${model}${fav}</span>
+            ${file.meta.prompt ? `<span class="dup-file-prompt">${prompt}…</span>` : ''}
+          </span>
+        </label>`;
+    }).join('');
+    return `
+      <div class="dup-group" data-hash="${esc(group.hash)}">
+        <div class="dup-group-head">
+          <div class="dup-group-title">${group.files.length} × identical (${formatBytes(group.size)} each)</div>
+          <div style="display:flex;gap:6px">
+            <button class="btn dup-group-delete" style="color:var(--danger)" onclick="deleteDupFiles(${gi})">Delete selected in group</button>
+          </div>
+        </div>
+        <div class="dup-files">${rows}</div>
+      </div>`;
+  }).join('');
+}
+
+function deleteDupFiles(groupIndex) {
+  const group = document.querySelectorAll('#dupGroups .dup-group')[groupIndex];
+  if (!group) return;
+  const keeps = [...group.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
+  const names = [...group.querySelectorAll('input[type="checkbox"]')].map(input => input.value);
+  const toDelete = names.filter(name => !keeps.includes(name));
+  if (!toDelete.length) {
+    showGalleryToast('Nothing selected for deletion — at least one file must stay.', true);
+    return;
+  }
+  if (!confirm(`Delete ${toDelete.length} duplicate file(s)? This cannot be undone.`)) return;
+  doDeleteDuplicates(toDelete);
+}
+
+function deleteDuplicatesKeepNewest() {
+  const toDelete = [];
+  for (const group of duplicateGroups) {
+    const sorted = [...group.files].sort((a, b) => a.mtime - b.mtime);
+    toDelete.push(...sorted.slice(0, -1).map(file => file.name));
+  }
+  if (!toDelete.length) return;
+  const favorites = duplicateGroups.some(g => g.files.some(f => f.meta.favorite));
+  const extra = favorites ? '\nWARNING: some duplicates are favorites — they will be deleted too.' : '';
+  if (!confirm(`Keep only the newest file in each of ${duplicateGroups.length} group(s)?\n${toDelete.length} file(s) will be deleted.${extra}`)) return;
+  doDeleteDuplicates(toDelete);
+}
+
+async function doDeleteDuplicates(names) {
+  const status = document.getElementById('dupStatus');
+  status.textContent = `Deleting ${names.length} file(s)…`;
+  await Promise.all(names.map(name => fetch(`/api/output/${encodeURIComponent(name)}`, { method: 'DELETE' })));
+  selectedGalleryOutputs.clear();
+  await loadEnhancedGallery();
+  await loadDuplicates();
+}

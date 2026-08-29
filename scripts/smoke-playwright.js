@@ -647,6 +647,75 @@ async function main() {
     await page.waitForSelector('.copy-prompt-btn');
     assert(await page.locator('.copy-prompt-btn:not(:disabled)').count() === 0, 'Recovered legacy outputs exposed a synthetic prompt as copyable');
 
+    // ── Feature pack: fal proxy, zip export, duplicates, stats, insights ─────
+    // Header controls are hidden behind the mobile drawer, so switch to desktop.
+    await page.setViewportSize({ width: 1280, height: 900 });
+    // fal proxy rejects submissions without a key.
+    const falNoKey = await fetch(`${baseUrl}/api/fal/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: 'minimax/h3-max/text-to-video', payload: { prompt: 'smoke' } }),
+    });
+    assert(falNoKey.status === 400, 'fal submit without key did not return 400');
+
+    const falBadEndpoint = await fetch(`${baseUrl}/api/fal/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: 'evil/../model', payload: {} }),
+    });
+    assert(falBadEndpoint.status === 400, 'fal submit with unknown endpoint did not return 400');
+
+    // Studio exposes the MiniMax video models and the fal key settings field.
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.querySelector('#serverDot')?.classList.contains('connected'));
+    assert(await page.locator('#videoModelSelect option[value="minimax/h3-max/text-to-video"]').count() === 1, 'MiniMax H3 Max T2V option missing');
+    assert(await page.locator('#videoModelSelect option[value="minimax/h3-max/image-to-video"]').count() === 1, 'MiniMax H3 Max I2V option missing');
+    assert(await page.locator('#falKeyInput').count() === 1, 'falApiKey settings input missing');
+    assert(await page.locator('#falH3Settings').count() === 1, 'fal H3 settings group missing');
+
+    // Insights button + stats endpoint. The header button is CSS-hidden behind
+    // the mobile drawer pattern, so drive the panel via its JS entrypoint.
+    assert(await page.locator('#insightsBtn').count() === 1, 'Insights header button missing');
+    const statsResponse = await fetch(`${baseUrl}/api/stats`);
+    assert(statsResponse.ok, '/api/stats not reachable');
+    const statsData = await statsResponse.json();
+    assert(typeof statsData.totalFiles === 'number' && typeof statsData.byDay === 'object', '/api/stats payload shape unexpected');
+    await page.evaluate(() => openInsights());
+    await page.waitForSelector('#insightsModal.show');
+    await page.waitForFunction(() => (document.getElementById('insightsBody')?.textContent || '').length > 0, null, { timeout: 5000 });
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.getElementById('insightsModal')?.classList.contains('show'), null, { timeout: 3000 }).catch(() => {});
+
+    // Compare button lives on history cards and opens the modal.
+    assert(await page.locator('.output-card-cmp').count() >= 1, 'Compare button missing on output cards');
+    await page.evaluate(() => document.querySelector('.output-card-cmp')?.click());
+    await page.waitForSelector('#compareModal.show');
+    await page.keyboard.press('Escape');
+
+    // ZIP export: happy path + traversal guard (files still exist above).
+    const zipResponse = await fetch(`${baseUrl}/api/outputs/zip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: ['smoke-output.png'] }),
+    });
+    assert(zipResponse.ok && zipResponse.headers.get('content-type') === 'application/zip', 'ZIP export did not return a zip');
+    const zipBytes = (await zipResponse.arrayBuffer()).byteLength;
+    assert(zipBytes > 0, 'ZIP export was empty');
+    const zipTraversal = await fetch(`${baseUrl}/api/outputs/zip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: ['../store.json'] }),
+    });
+    assert(zipTraversal.status === 400 || (zipTraversal.ok && zipTraversal.headers.get('x-seedream-missing')), 'ZIP export did not reject traversal names');
+
+    // Duplicate finder groups byte-identical outputs.
+    const dupesResponse = await fetch(`${baseUrl}/api/duplicates`);
+    assert(dupesResponse.ok, '/api/duplicates not reachable');
+    const dupesData = await dupesResponse.json();
+    const dupeGroup = (dupesData.groups || []).find(group => group.files?.length >= 2 &&
+      group.files.every(file => ['smoke-output.png', 'orphan-output.png', 'remote-collision.png', 'delete-collision.png'].includes(file.name)));
+    assert(Boolean(dupeGroup), 'Duplicate finder did not group the identical smoke outputs');
+
     await browser.close();
     console.log(`Smoke test passed. Evidence: ${evidenceDir}`);
   } finally {
