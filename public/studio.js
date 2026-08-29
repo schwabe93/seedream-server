@@ -1,0 +1,3859 @@
+
+// COMPARE MODAL
+document.body.insertAdjacentHTML('beforeend', `
+<div class="compare-modal" id="compareModal" role="dialog" aria-modal="true" aria-labelledby="compareTitle" onclick="if(event.target===this)closeCompareModal()">
+  <div class="compare-card">
+    <div style="display:flex;align-items:center;gap:8px">
+      <h3 id="compareTitle" style="margin:0;flex:1">Compare A / B</h3>
+      <button class="btn-secondary" onclick="swapCompareSlots()" style="padding:4px 10px;font-size:11px">⇄ Swap</button>
+      <button class="btn-secondary" onclick="clearCompareSlots()" style="padding:4px 10px;font-size:11px">Clear</button>
+      <button class="btn-secondary" onclick="closeCompareModal()" style="padding:4px 10px;font-size:11px">Close</button>
+    </div>
+    <div class="compare-grid" id="compareGrid">
+      <div class="compare-slot" id="compareSlotA" data-slot="empty"><div class="compare-empty">Click ⚖ Compare<br>on an output card to fill this slot.</div></div>
+      <div class="compare-slot" id="compareSlotB" data-slot="empty" data-slot-b="1"><div class="compare-empty">Click ⚖ Compare<br>on an output card to fill this slot.</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- INSIGHTS MODAL -->
+<div class="insights-modal" id="insightsModal" role="dialog" aria-modal="true" aria-labelledby="insightsTitle" onclick="if(event.target===this)closeInsights()">
+  <div class="insights-card">
+    <div style="display:flex;align-items:center;gap:8px">
+      <h3 id="insightsTitle" style="margin:0;flex:1">Studio Insights</h3>
+      <button class="btn-secondary" onclick="closeInsights()" style="padding:4px 10px;font-size:11px">Close</button>
+    </div>
+    <div id="insightsBody"><div class="insights-empty">Loading…</div></div>
+  </div>
+</div>`);
+// ============================================================
+// STATE
+// ============================================================
+// ============================================================
+// SERVER STORAGE — replaces localStorage with /api/store
+// ============================================================
+const SERVER = ''; // same origin
+
+async function serverGet(key, fallback = null) {
+  try {
+    const r = await fetch(`${SERVER}/api/store/${encodeURIComponent(key)}`);
+    if (!r.ok) return fallback;
+    const d = await r.json();
+    try { return JSON.parse(d.value); } catch { return d.value; }
+  } catch { return fallback; }
+}
+
+async function serverSet(key, value) {
+  try {
+    const response = await fetch(`${SERVER}/api/store/${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: typeof value === 'string' ? value : JSON.stringify(value) }),
+    });
+    if (!response.ok) {
+      console.warn('serverSet failed', key, response.status);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('serverSet failed', key, e);
+    return false;
+  }
+}
+
+async function serverDel(key) {
+  try {
+    await fetch(`${SERVER}/api/store/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  } catch {}
+}
+
+async function serverSetBulk(entries) {
+  try {
+    await fetch(`${SERVER}/api/store-bulk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    });
+  } catch (e) { console.warn('serverSetBulk failed', e); }
+}
+
+// Save a generated output URL to the server permanently
+async function saveOutputToServer(url, filename, prompt = '', metadata = {}) {
+  try {
+    const r = await fetch(`${SERVER}/api/save-output`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, filename, prompt, metadata }),
+    });
+    if (!r.ok) return url; // fallback to original URL
+    const d = await r.json();
+    return d.localUrl || url;
+  } catch { return url; }
+}
+
+function getPromptText(entry) {
+  const prompt = String(entry?.promptFull || entry?.prompt || '').trim();
+  if (entry?.promptUnavailable || (entry?.model === 'Recovered' && prompt === 'Recovered from server output')) return '';
+  return prompt;
+}
+
+function normalizeOutputUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw, window.location.origin);
+    return parsed.pathname;
+  } catch {
+    return raw;
+  }
+}
+
+function findHistoryItemByOutput(outputUrl) {
+  const wanted = normalizeOutputUrl(outputUrl);
+  return history.find(h => {
+    const candidates = [
+      h.thumb,
+      h.videoUrl,
+      ...(Array.isArray(h.outputs) ? h.outputs : []),
+    ].filter(Boolean);
+
+    return candidates.some(candidate => normalizeOutputUrl(candidate) === wanted);
+  }) || null;
+}
+
+async function copyTextToClipboard(text, successMsg = 'Copied to clipboard') {
+  const value = String(text || '').trim();
+  if (!value) {
+    showToast('No prompt available to copy', 'error');
+    return false;
+  }
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = value;
+      ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.left = '0';
+      ta.style.width = '1px';
+      ta.style.height = '1px';
+      ta.style.opacity = '0.01';
+      ta.style.fontSize = '16px';
+      document.body.appendChild(ta);
+      let ok = false;
+      try {
+        ta.focus({ preventScroll: true });
+        ta.select();
+        ta.setSelectionRange(0, value.length);
+        ok = document.execCommand('copy');
+      } finally {
+        ta.remove();
+      }
+      if (!ok) throw new Error('execCommand copy failed');
+    }
+    showToast(successMsg, 'success');
+    return true;
+  } catch (e) {
+    window.prompt('Automatic copying is blocked on this connection. Long-press the selected prompt and choose Copy:', value);
+    showToast('Prompt opened for manual copy', 'error');
+    return false;
+  }
+}
+
+let workspaceSaveTimer = null;
+
+function getGuidanceSlider() {
+  return document.querySelector('#imgSettings input[type="range"]');
+}
+
+function currentWorkspaceState() {
+  return {
+    promptText: document.getElementById('promptTextarea')?.value || '',
+    refImages: refImages.map(r => ({ src: getRefSrc(r), dataUrl: r.dataUrl, name: r.name })),
+    currentMode,
+    currentTab,
+    imageModel: document.getElementById('modelSelect')?.value || '',
+    imageSize: document.getElementById('sizeSelect')?.value || '',
+    imageCount: document.getElementById('countSelect')?.value || '1',
+    videoModel: document.getElementById('videoModelSelect')?.value || '',
+    aspectRatio: document.getElementById('aspectSelect')?.value || '16:9',
+    duration: document.getElementById('durationSelect')?.value || '8',
+    falResolution: document.getElementById('falResolutionSelect')?.value || '768P',
+    falDuration: document.getElementById('falDurationSelect')?.value || '5',
+    falExpansion: document.getElementById('falExpansionSelect')?.value || 'balanced',
+    guidance: getGuidanceSlider()?.value || '7.5',
+    syncMode: document.getElementById('syncToggle')?.classList.contains('on') || false,
+    pngOutput: document.getElementById('pngToggle')?.classList.contains('on') || false,
+    generateAudio: document.getElementById('audioToggle')?.classList.contains('on') || false,
+    cameraFixed: document.getElementById('cameraFixedToggle')?.classList.contains('on') || false,
+    openPromptFolderIds: [...openPromptFolderIds],
+    openReferenceFolderIds: [...openReferenceFolderIds],
+  };
+}
+
+function scheduleWorkspaceSave() {
+  clearTimeout(workspaceSaveTimer);
+  workspaceSaveTimer = setTimeout(() => {
+    serverSet('atlasWorkspace', currentWorkspaceState());
+  }, 250);
+}
+
+function applyWorkspaceState(state) {
+  if (!state || typeof state !== 'object') return;
+
+  if (typeof state.promptText === 'string') {
+    document.getElementById('promptTextarea').value = state.promptText;
+  }
+
+  refImages = Array.isArray(state.refImages)
+    ? state.refImages
+        .map(item => ({
+          src: item?.src || item?.dataUrl || '',
+          dataUrl: item?.dataUrl || '',
+          name: item?.name || 'Reference',
+        }))
+        .filter(item => getRefSrc(item))
+        .slice(0, 10)
+    : [];
+
+  openPromptFolderIds.clear();
+  if (Array.isArray(state.openPromptFolderIds)) {
+    state.openPromptFolderIds.forEach(id => { if (id) openPromptFolderIds.add(id); });
+  }
+  promptFolderStateInitialized = true;
+
+  openReferenceFolderIds.clear();
+  if (Array.isArray(state.openReferenceFolderIds)) {
+    state.openReferenceFolderIds.forEach(id => { if (id) openReferenceFolderIds.add(id); });
+  }
+  referenceFolderStateInitialized = true;
+
+  const imageModelEl = document.getElementById('modelSelect');
+  if (state.imageModel && optionExists(imageModelEl, state.imageModel)) imageModelEl.value = state.imageModel;
+
+  const imageSizeEl = document.getElementById('sizeSelect');
+  if (state.imageSize && optionExists(imageSizeEl, state.imageSize)) imageSizeEl.value = state.imageSize;
+
+  const imageCountEl = document.getElementById('countSelect');
+  if (state.imageCount && optionExists(imageCountEl, state.imageCount)) imageCountEl.value = String(state.imageCount);
+
+  const videoModelEl = document.getElementById('videoModelSelect');
+  if (state.videoModel && optionExists(videoModelEl, state.videoModel)) videoModelEl.value = state.videoModel;
+
+  const falResolutionEl = document.getElementById('falResolutionSelect');
+  if (falResolutionEl && state.falResolution && optionExists(falResolutionEl, state.falResolution)) falResolutionEl.value = state.falResolution;
+  const falDurationEl = document.getElementById('falDurationSelect');
+  if (falDurationEl && state.falDuration && optionExists(falDurationEl, state.falDuration)) falDurationEl.value = String(state.falDuration);
+  const falExpansionEl = document.getElementById('falExpansionSelect');
+  if (falExpansionEl && state.falExpansion && optionExists(falExpansionEl, state.falExpansion)) falExpansionEl.value = state.falExpansion;
+  updateFalSettingsVisibility();
+
+  const aspectEl = document.getElementById('aspectSelect');
+  if (state.aspectRatio && optionExists(aspectEl, state.aspectRatio)) aspectEl.value = state.aspectRatio;
+
+  const durationEl = document.getElementById('durationSelect');
+  if (state.duration && optionExists(durationEl, state.duration)) durationEl.value = String(state.duration);
+
+  const guidanceSlider = getGuidanceSlider();
+  if (guidanceSlider && state.guidance) {
+    guidanceSlider.value = String(state.guidance);
+    document.getElementById('guidanceVal').textContent = String(state.guidance);
+  }
+
+  document.getElementById('syncToggle')?.classList.toggle('on', !!state.syncMode);
+  document.getElementById('pngToggle')?.classList.toggle('on', !!state.pngOutput);
+  document.getElementById('audioToggle')?.classList.toggle('on', state.generateAudio !== false);
+  document.getElementById('cameraFixedToggle')?.classList.toggle('on', !!state.cameraFixed);
+
+  const modeBtn = document.getElementById(state.currentMode === 'video' ? 'modeVideoBtn' : 'modeImageBtn');
+  switchMode(state.currentMode === 'video' ? 'video' : 'image', modeBtn);
+
+  renderPrompts();
+  renderFolders();
+  renderRefStrip();
+
+  const tabButtons = document.querySelectorAll('#viewTabs .htab');
+  const targetTab = state.currentTab === 'history' ? 'history' : 'generate';
+  switchTab(targetTab, targetTab === 'history' ? tabButtons[1] : tabButtons[0]);
+}
+
+function setupWorkspaceAutosave() {
+  const watchedSelectors = [
+    '#promptTextarea',
+    '#modelSelect',
+    '#sizeSelect',
+    '#countSelect',
+    '#videoModelSelect',
+    '#aspectSelect',
+    '#durationSelect',
+    '#falResolutionSelect',
+    '#falDurationSelect',
+    '#falExpansionSelect',
+    '#imgSettings input[type="range"]',
+  ];
+
+  watchedSelectors.forEach(selector => {
+    const el = document.querySelector(selector);
+    if (!el) return;
+    el.addEventListener('input', scheduleWorkspaceSave);
+    el.addEventListener('change', () => {
+      updateFalSettingsVisibility();
+      scheduleWorkspaceSave();
+    });
+  });
+
+  [
+    'syncToggle',
+    'pngToggle',
+    'audioToggle',
+    'cameraFixedToggle',
+    'modeImageBtn',
+    'modeVideoBtn',
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', () => setTimeout(scheduleWorkspaceSave, 0));
+  });
+
+  document.querySelectorAll('#viewTabs .htab').forEach(el => {
+    el.addEventListener('click', () => setTimeout(scheduleWorkspaceSave, 0));
+  });
+}
+
+async function copyPromptForOutput(outputUrl) {
+  const item = findHistoryItemByOutput(outputUrl);
+  return copyTextToClipboard(getPromptText(item), 'Prompt copied to clipboard');
+}
+
+async function copyPromptByHistoryId(id) {
+  const item = history.find(h => String(h.id) === String(id));
+  return copyTextToClipboard(getPromptText(item), 'Prompt copied to clipboard');
+}
+
+async function fetchSavedOutputs() {
+  try {
+    const r = await fetch(`${SERVER}/api/outputs`);
+    if (!r.ok) return [];
+    const d = await r.json();
+    return Array.isArray(d.files) ? d.files : [];
+  } catch {
+    return [];
+  }
+}
+
+function getImageSrc(img) {
+  return String(img?.src || img?.localUrl || img?.url || img?.dataUrl || '');
+}
+
+function getRefSrc(ref) {
+  return String(ref?.src || ref?.dataUrl || '');
+}
+
+function normalizeReferenceGroups(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((group, groupIndex) => {
+    const seen = new Set();
+    const images = (Array.isArray(group?.images) ? group.images : [])
+      .map(image => ({
+        src: getRefSrc(image),
+        dataUrl: image?.dataUrl || '',
+        name: String(image?.name || 'Reference'),
+      }))
+      .filter(image => {
+        const src = getRefSrc(image);
+        if (!src || seen.has(src)) return false;
+        seen.add(src);
+        return true;
+      })
+      .slice(0, 10);
+    return {
+      id: group?.id || makeId(`ref-group-${groupIndex}`),
+      name: String(group?.name || `Group ${groupIndex + 1}`).trim().slice(0, 60) || `Group ${groupIndex + 1}`,
+      images,
+    };
+  }).filter(group => group.images.length > 0);
+}
+
+async function uploadRefFileToServer(file) {
+  const q = encodeURIComponent(file.name || 'ref.jpg');
+  const resp = await fetch(`${SERVER}/api/upload-ref?filename=${q}`, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+  });
+  if (!resp.ok) throw new Error(`Upload failed (HTTP ${resp.status})`);
+  const data = await resp.json();
+  if (!data.localUrl) throw new Error('Upload failed: no local URL returned');
+  return data.localUrl;
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('FileReader error'));
+    reader.onload = e => resolve(String(e.target?.result || ''));
+    reader.readAsDataURL(file);
+  });
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('FileReader error'));
+    reader.onload = e => resolve(String(e.target?.result || ''));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function refToDataUrl(ref) {
+  const direct = String(ref?.dataUrl || '');
+  if (direct.startsWith('data:image/')) return direct;
+  const src = getRefSrc(ref);
+  if (!src) throw new Error('Reference image has no source');
+  if (src.startsWith('data:image/')) return src;
+  const resp = await fetch(src);
+  if (!resp.ok) throw new Error(`Could not read reference ${src} (HTTP ${resp.status})`);
+  const blob = await resp.blob();
+  return blobToDataUrl(blob);
+}
+
+async function prepareJobRefs(refs) {
+  const out = [];
+  for (const r of refs || []) {
+    const dataUrl = await refToDataUrl(r);
+    out.push({ dataUrl, src: getRefSrc(r), name: r.name || '' });
+  }
+  return out;
+}
+
+// ── Runtime state ──────────────────────────────────────────────────────────
+let apiKey    = '';
+let xaiAuthToken = '';
+let falApiKey = '';
+let xaiPromptCategories = [];
+const selectedXaiPromptKeywords = new Set();
+const editingXaiPromptCategoryIds = new Set();
+let xaiPromptCategorySaveQueue = Promise.resolve(true);
+let xaiKeywordDeletePending = false;
+let prompts   = [];
+let promptFolders = [];
+let folders   = [];
+let referenceGroups = [];
+let referenceGroupSavePending = false;
+let folderReferenceGroupDraft = null;
+let history   = [];
+let refImages = [];
+let currentTab = 'generate';
+const openPromptFolderIds = new Set();
+const openReferenceFolderIds = new Set();
+const selectedPromptIds = new Set();
+let generationQueue = [];
+let generationQueueSaveChain = Promise.resolve(true);
+let favorites = { prompts: [], groups: [] };
+let workflowPresets = [];
+let librarySearchQuery = '';
+let promptFolderStateInitialized = false;
+let referenceFolderStateInitialized = false;
+
+const DEFAULT_IMAGE_SETTINGS = {
+  model: 'bytedance/seedream-v4.5/edit',
+  size: '2048*2048',
+  count: 1,
+};
+
+const DEFAULT_XAI_PROMPT_CATEGORIES = [
+  {
+    id: 'reference',
+    name: 'Refernz',
+    locked: true,
+    keywords: ['reference image', 'same character', 'same pose', 'same outfit', 'same location', 'match image style'],
+  },
+  {
+    id: 'style',
+    name: 'Style',
+    keywords: ['cinematic', 'editorial', 'photorealistic', 'analog film', 'minimalist', 'high fashion', 'surreal', 'product photography'],
+  },
+  {
+    id: 'pose',
+    name: 'Pose',
+    keywords: ['standing confidently', 'looking over shoulder', 'dynamic action pose', 'seated relaxed', 'walking toward camera', 'hands in pockets'],
+  },
+  {
+    id: 'environment',
+    name: 'Environment / Ort',
+    keywords: ['urban rooftop', 'neon-lit street', 'modern studio', 'forest clearing', 'luxury apartment', 'desert highway', 'futuristic city', 'coastal cliff'],
+  },
+  {
+    id: 'lighting',
+    name: 'Lighting',
+    keywords: ['golden hour', 'softbox lighting', 'dramatic rim light', 'volumetric light', 'moody low key', 'clean daylight'],
+  },
+];
+
+function makeId(prefix = 'id') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeFolderNodes(list, fallbackId, fallbackName) {
+  const items = Array.isArray(list) ? list.map((item, idx) => ({
+    ...item,
+    id: item.id || makeId(`folder-${idx}`),
+    name: item.name || fallbackName,
+    parentId: item.parentId || null,
+  })) : [];
+
+  if (!items.length) {
+    items.push({ id: fallbackId, name: fallbackName, parentId: null });
+  }
+
+  const ids = new Set(items.map(item => item.id));
+  items.forEach(item => {
+    if (item.parentId && !ids.has(item.parentId)) item.parentId = null;
+  });
+
+  return items;
+}
+
+function getChildren(items, parentId = null) {
+  return items.filter(item => String(item.parentId || '') === String(parentId || ''));
+}
+
+function getFolderPath(items, id) {
+  const parts = [];
+  let current = items.find(item => String(item.id) === String(id));
+  while (current) {
+    parts.unshift(current.name);
+    current = current.parentId ? items.find(item => String(item.id) === String(current.parentId)) : null;
+  }
+  return parts.join(' / ');
+}
+
+function buildFolderOptions(items, selectedId = '', includeTopLevel = false, topLevelLabel = 'Top level', parentId = null, depth = 0) {
+  const children = getChildren(items, parentId);
+  const prefix = depth ? `${' '.repeat(depth * 2)}↳ ` : '';
+  let html = '';
+
+  if (depth === 0 && includeTopLevel) {
+    html += `<option value="">${escHtml(topLevelLabel)}</option>`;
+  }
+
+  children.forEach(child => {
+    html += `<option value="${child.id}"${String(child.id) === String(selectedId) ? ' selected' : ''}>${escHtml(prefix + child.name)}</option>`;
+    html += buildFolderOptions(items, selectedId, false, topLevelLabel, child.id, depth + 1);
+  });
+
+  return html;
+}
+
+function ensureReferenceFolderShape() {
+  folders = normalizeFolderNodes(folders, 'rf-general', 'General');
+  folders = folders.map(folder => ({ ...folder, images: Array.isArray(folder.images) ? folder.images : [] }));
+}
+
+function ensurePromptFolderShape() {
+  promptFolders = normalizeFolderNodes(promptFolders, 'pf-general', 'General');
+
+  prompts = (Array.isArray(prompts) ? prompts : []).map((p, idx) => {
+    const folderId = p.folderId && promptFolders.some(f => f.id === p.folderId)
+      ? p.folderId
+      : promptFolders[0].id;
+    return {
+      id: p.id || makeId(`prompt-${idx}`),
+      name: p.name || 'Prompt',
+      text: p.text || '',
+      folderId,
+    };
+  });
+}
+
+function optionExists(selectEl, value) {
+  return !!selectEl && [...selectEl.options].some(o => o.value === String(value));
+}
+
+function applyImageDefaults(defaults) {
+  const d = defaults || DEFAULT_IMAGE_SETTINGS;
+  const modelEl = document.getElementById('modelSelect');
+  const sizeEl = document.getElementById('sizeSelect');
+  const countEl = document.getElementById('countSelect');
+
+  if (optionExists(modelEl, d.model)) modelEl.value = d.model;
+  if (optionExists(sizeEl, d.size)) sizeEl.value = d.size;
+  if (optionExists(countEl, d.count)) countEl.value = String(d.count);
+}
+
+function currentImageDefaults() {
+  return {
+    model: document.getElementById('modelSelect').value,
+    size: document.getElementById('sizeSelect').value,
+    count: parseInt(document.getElementById('countSelect').value, 10) || 1,
+  };
+}
+
+// ── Polling: detect changes from other devices ─────────────────────────────
+let lastKnownVersion = 0;
+let pollActive = false;
+
+async function startPolling() {
+  if (pollActive) return;
+  pollActive = true;
+  while (true) {
+    await new Promise(r => setTimeout(r, 5000)); // check every 5s
+    try {
+      const r = await fetch(`${SERVER}/api/version`);
+      if (!r.ok) continue;
+      const { version } = await r.json();
+      if (version > lastKnownVersion && lastKnownVersion !== 0) {
+        console.log('🔄 Server data changed — syncing...');
+        await syncFromServer();
+      }
+      lastKnownVersion = version;
+    } catch {}
+  }
+}
+
+async function syncFromServer() {
+  const [savedPrompts, savedPromptFolders, savedFolders, savedReferenceGroups, savedHistory, savedFavorites, savedPresets, savedQueue] = await Promise.all([
+    serverGet('atlasPrompts', null),
+    serverGet('atlasPromptFolders', null),
+    serverGet('atlasFolders', null),
+    serverGet('atlasReferenceGroups', []),
+    serverGet('atlasHistory', []),
+    serverGet('atlasFavorites', {}),
+    serverGet('atlasWorkflowPresets', []),
+    serverGet('atlasGenerationQueue', []),
+  ]);
+
+  let changed = false;
+
+  if (Array.isArray(savedPrompts) && JSON.stringify(savedPrompts) !== JSON.stringify(prompts)) {
+    prompts = savedPrompts;
+    changed = true;
+  }
+  if (Array.isArray(savedPromptFolders) && JSON.stringify(savedPromptFolders) !== JSON.stringify(promptFolders)) {
+    promptFolders = savedPromptFolders;
+    changed = true;
+  }
+  if (Array.isArray(savedFolders) && JSON.stringify(savedFolders) !== JSON.stringify(folders)) {
+    folders = savedFolders;
+    changed = true;
+  }
+  const normalizedSavedReferenceGroups = normalizeReferenceGroups(savedReferenceGroups);
+  if (JSON.stringify(normalizedSavedReferenceGroups) !== JSON.stringify(savedReferenceGroups || [])) {
+    serverSet('atlasReferenceGroups', normalizedSavedReferenceGroups);
+  }
+  if (JSON.stringify(normalizedSavedReferenceGroups) !== JSON.stringify(referenceGroups)) {
+    referenceGroups = normalizedSavedReferenceGroups;
+    renderReferenceGroups();
+    changed = true;
+  }
+  if (Array.isArray(savedHistory) && JSON.stringify(savedHistory) !== JSON.stringify(history)) {
+    history = savedHistory;
+    renderHistory();
+    restoreOutputGrid();
+    changed = true;
+  }
+
+  if (changed) {
+    ensurePromptFolderShape();
+    ensureReferenceFolderShape();
+    renderPrompts();
+    renderFolders();
+  }
+
+  if (changed) showToast('Synced from server', 'success');
+}
+
+// Restore output grid from history (outputs that were saved to server)
+function restoreOutputGrid() {
+  const grid  = document.getElementById('outputGrid');
+  const empty = document.getElementById('emptyState');
+  if (!history.length) return;
+
+  // Only add items not already in the grid (match by url)
+  const existingUrls = new Set(
+    [...grid.querySelectorAll('img,video')].map(el => el.src)
+  );
+
+  let added = 0;
+  for (const h of [...history].reverse()) {
+    const outputs = h.outputs || (h.thumb ? [h.thumb] : []);
+    for (const outputUrl of outputs) {
+      const fullUrl = outputUrl.startsWith('/') ? window.location.origin + outputUrl : outputUrl;
+      if (existingUrls.has(fullUrl) || existingUrls.has(outputUrl)) continue;
+
+      const card = document.createElement('div');
+      const ts   = new Date(h.time || h.id).toLocaleTimeString();
+
+      if (h.type === 'video') {
+        card.className = 'output-card video-card';
+        card.innerHTML = `
+          <video src="${outputUrl}" controls playsinline style="width:100%;aspect-ratio:16/9;background:#000;display:block"></video>
+          <div class="output-card-info">
+            <span>${escHtml(h.model)} · ${ts} <span class="mode-badge video">VID</span></span>
+            <div style="display:flex;gap:6px">
+              <button class="output-card-copy" onclick="copyPromptForOutput('${outputUrl}')" title="Copy prompt">⧉</button>
+              <button class="output-card-cmp" onclick="compareOutput('${outputUrl}')" title="Compare">⚖</button>
+              <button class="output-card-dl" onclick="downloadVideo('${outputUrl}')" title="Download">⬇</button>
+              <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
+            </div>
+          </div>`;
+      } else {
+        card.className = 'output-card';
+        card.innerHTML = `
+          <img src="${outputUrl}" alt="Generated" loading="lazy" onclick="openLightbox('${outputUrl}')">
+          <div class="output-card-info">
+            <span>${escHtml(h.model)} · ${ts} <span class="mode-badge image">IMG</span></span>
+            <div style="display:flex;gap:6px">
+              <button class="output-card-copy" onclick="copyPromptForOutput('${outputUrl}')" title="Copy prompt">⧉</button>
+              <button class="output-card-cmp" onclick="compareOutput('${outputUrl}')" title="Compare">⚖</button>
+              <button class="output-card-dl" onclick="downloadImage('${outputUrl}')" title="Download">⬇</button>
+              <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
+            </div>
+          </div>`;
+      }
+      grid.appendChild(card);
+      added++;
+    }
+  }
+
+  if (added > 0 || grid.children.length > 0) {
+    grid.style.display = 'grid';
+    empty.style.display = 'none';
+  }
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+async function bootFromServer() {
+  const [savedKey, savedXaiToken, savedFalKey, savedXaiPromptCategories, savedPrompts, savedPromptFolders, savedFolders, savedReferenceGroups, savedHistory, savedAutosave, savedImageDefaults, savedWorkspace, savedFavorites, savedPresets, savedQueue, pendingReuse] = await Promise.all([
+    serverGet('atlasApiKey', ''),
+    serverGet('xaiAuthToken', ''),
+    serverGet('falApiKey', ''),
+    serverGet('xaiPromptCategories', null),
+    serverGet('atlasPrompts', null),
+    serverGet('atlasPromptFolders', null),
+    serverGet('atlasFolders', null),
+    serverGet('atlasReferenceGroups', []),
+    serverGet('atlasHistory', []),
+    serverGet('atlasAutosave', '0'),
+    serverGet('atlasImageDefaults', null),
+    serverGet('atlasWorkspace', null),
+    serverGet('atlasFavorites', {}),
+    serverGet('atlasWorkflowPresets', []),
+    serverGet('atlasGenerationQueue', []),
+    serverGet('atlasPendingReuse', null),
+  ]);
+
+  apiKey = savedKey || '';
+  xaiAuthToken = savedXaiToken || '';
+  falApiKey = savedFalKey || '';
+  xaiPromptCategories = normalizeXaiPromptCategories(savedXaiPromptCategories);
+  document.getElementById('apiKeyInput').value = apiKey;
+  const settingsAtlasEl = document.getElementById('settingsAtlasKeyInput');
+  const xaiTokenEl = document.getElementById('xaiTokenInput');
+  const falKeyEl = document.getElementById('falKeyInput');
+  if (settingsAtlasEl) settingsAtlasEl.value = apiKey;
+  if (xaiTokenEl) xaiTokenEl.value = xaiAuthToken;
+  if (falKeyEl) falKeyEl.value = falApiKey;
+  if (apiKey) document.getElementById('statusDot').classList.add('connected');
+
+  if (Array.isArray(savedPrompts)) {
+    prompts = savedPrompts;
+  } else {
+    prompts = [
+      { id: makeId('prompt'), name:'Cinematic Portrait',  text:'Cinematic close-up portrait, dramatic side lighting, shallow depth of field, film grain, 35mm' },
+      { id: makeId('prompt'), name:'Fantasy Landscape',   text:'Epic fantasy landscape with floating islands, waterfalls, magical glowing trees, volumetric light, ultra-detailed' },
+      { id: makeId('prompt'), name:'Product Shot',        text:'Minimalist product photography, white background, professional studio lighting, sharp focus, commercial quality' },
+      { id: makeId('prompt'), name:'Poster Design',       text:'Bold retro-futuristic poster design, geometric shapes, vivid neon colors, Bauhaus-inspired typography, vector art style' },
+    ];
+  }
+
+  if (Array.isArray(savedPromptFolders)) {
+    promptFolders = savedPromptFolders;
+  } else {
+    promptFolders = [{ id: 'pf-general', name: 'General' }];
+  }
+  ensurePromptFolderShape();
+  if (!Array.isArray(savedPromptFolders)) await serverSet('atlasPromptFolders', promptFolders);
+  if (!Array.isArray(savedPrompts)) await serverSet('atlasPrompts', prompts);
+
+  if (Array.isArray(savedFolders)) {
+    folders = savedFolders;
+  } else {
+    folders = [
+      { id: 'f1', name: 'Style References', color: '#f59e0b', images: [] },
+      { id: 'f2', name: 'Character Refs',   color: '#f59e0b', images: [] },
+      { id: 'f3', name: 'Environment',      color: '#f59e0b', images: [] },
+    ];
+    await serverSet('atlasFolders', folders);
+  }
+  const nextFavorites = normalizeFavorites(savedFavorites);
+  if (JSON.stringify(nextFavorites) !== JSON.stringify(favorites)) {
+    favorites = nextFavorites;
+    changed = true;
+  }
+  const nextPresets = normalizeWorkflowPresets(savedPresets);
+  if (JSON.stringify(nextPresets) !== JSON.stringify(workflowPresets)) {
+    workflowPresets = nextPresets;
+    renderWorkflowPresets();
+  }
+  if (!activeGenerations && Array.isArray(savedQueue) && JSON.stringify(savedQueue) !== JSON.stringify(generationQueue)) {
+    generationQueue = normalizeGenerationQueue(savedQueue);
+    renderQueue();
+    updateGenerateButtonLabel();
+    processQueue();
+  }
+  ensureReferenceFolderShape();
+  referenceGroups = normalizeReferenceGroups(savedReferenceGroups);
+  if (JSON.stringify(referenceGroups) !== JSON.stringify(savedReferenceGroups || [])) {
+    await serverSet('atlasReferenceGroups', referenceGroups);
+  }
+
+  if (!savedWorkspace) {
+    const firstPromptRoot = getChildren(promptFolders, null)[0];
+    if (firstPromptRoot) openPromptFolderIds.add(firstPromptRoot.id);
+    promptFolderStateInitialized = true;
+
+    const firstReferenceRoot = getChildren(folders, null)[0];
+    if (firstReferenceRoot) openReferenceFolderIds.add(firstReferenceRoot.id);
+    referenceFolderStateInitialized = true;
+  }
+
+  history = Array.isArray(savedHistory) ? savedHistory : [];
+  favorites = normalizeFavorites(savedFavorites);
+  workflowPresets = normalizeWorkflowPresets(savedPresets);
+  generationQueue = normalizeGenerationQueue(savedQueue);
+  if (!history.length) {
+    const files = await fetchSavedOutputs();
+    if (files.length) {
+      history = files.slice(0, 50).map((f, i) => {
+        const name = f.name || '';
+        const isVideo = /\.(mp4|webm)$/i.test(name);
+        const outputUrl = `/outputs/${encodeURIComponent(name)}`;
+        const recoveredPrompt = String(f.prompt || '').trim();
+        const timestamp = new Date(f.mtime || Date.now()).toLocaleTimeString();
+        return {
+          id: Date.now() - i,
+          type: isVideo ? 'video' : 'image',
+          model: 'Recovered',
+          prompt: recoveredPrompt,
+          promptFull: recoveredPrompt,
+          promptUnavailable: !recoveredPrompt,
+          thumb: outputUrl,
+          videoUrl: isVideo ? outputUrl : '',
+          outputs: [outputUrl],
+          time: timestamp,
+        };
+      });
+      await serverSet('atlasHistory', history);
+    }
+  }
+
+  autosaveEnabled = savedAutosave === '1' || savedAutosave === true;
+  if (autosaveEnabled) document.getElementById('autosaveToggle').classList.add('on');
+
+  if (savedImageDefaults && typeof savedImageDefaults === 'object') {
+    applyImageDefaults(savedImageDefaults);
+  } else {
+    applyImageDefaults(DEFAULT_IMAGE_SETTINGS);
+    await serverSet('atlasImageDefaults', DEFAULT_IMAGE_SETTINGS);
+  }
+
+  renderPrompts(); renderFolders(); renderHistory(); renderRefStrip();
+  renderWorkflowPresets();
+  applyWorkspaceState(savedWorkspace);
+  if (pendingReuse) {
+    applyGalleryReuse(pendingReuse);
+    await serverDel('atlasPendingReuse');
+  }
+  restoreOutputGrid();
+  renderQueue();
+  updateGenerateButtonLabel();
+  processQueue();
+  updateSaveFolderUI();
+  initSaveFolder();
+  setupWorkspaceAutosave();
+
+  // Get current version then start polling
+  try {
+    const r = await fetch(`${SERVER}/api/version`);
+    if (r.ok) { const d = await r.json(); lastKnownVersion = d.version; }
+  } catch {}
+  startPolling();
+
+  const dot = document.getElementById('serverDot');
+  if (dot) dot.classList.add('connected');
+  console.log('✅ Seedream Studio: loaded from server, polling started');
+}
+
+bootFromServer();
+
+// ============================================================
+// API KEY
+// ============================================================
+function onApiKeyChange(val) {
+  apiKey = val.trim();
+  serverSet('atlasApiKey', apiKey);
+  document.getElementById('statusDot').classList.toggle('connected', apiKey.length > 10);
+  const settingsAtlasEl = document.getElementById('settingsAtlasKeyInput');
+  if (settingsAtlasEl && settingsAtlasEl.value !== apiKey) settingsAtlasEl.value = apiKey;
+}
+
+function onSettingsAtlasKeyChange(val) {
+  const hidden = document.getElementById('apiKeyInput');
+  if (hidden) hidden.value = val;
+  onApiKeyChange(val);
+}
+
+function onXaiTokenChange(val) {
+  xaiAuthToken = val.trim();
+  serverSet('xaiAuthToken', xaiAuthToken);
+}
+
+function onFalKeyChange(val) {
+  falApiKey = val.trim();
+  serverSet('falApiKey', falApiKey);
+}
+
+function normalizeXaiPromptCategories(saved) {
+  const source = Array.isArray(saved) && saved.length ? saved : DEFAULT_XAI_PROMPT_CATEGORIES;
+  const normalized = source.map((cat, idx) => ({
+    id: cat.id || makeId(`xai-cat-${idx}`),
+    name: cat.name || 'Category',
+    locked: cat.locked === true || cat.id === 'reference',
+    keywords: [...new Set((Array.isArray(cat.keywords) ? cat.keywords : [])
+      .map(k => String(k || '').trim())
+      .filter(Boolean))],
+  }));
+  const defaultReference = DEFAULT_XAI_PROMPT_CATEGORIES.find(cat => cat.id === 'reference');
+  const existingReference = normalized.find(cat => cat.id === 'reference');
+  if (existingReference) {
+    existingReference.name = 'Refernz';
+    existingReference.locked = true;
+  } else if (defaultReference) {
+    normalized.unshift({ ...defaultReference, keywords: [...defaultReference.keywords] });
+  }
+  return normalized.sort((a, b) => (a.id === 'reference' ? -1 : b.id === 'reference' ? 1 : 0));
+}
+
+function saveXaiPromptCategories() {
+  const snapshot = xaiPromptCategories.map(cat => ({ ...cat, keywords: [...cat.keywords] }));
+  const save = xaiPromptCategorySaveQueue.then(() => serverSet('xaiPromptCategories', snapshot));
+  xaiPromptCategorySaveQueue = save.catch(() => false);
+  return save;
+}
+
+function slugifyXaiCategoryName(name) {
+  const slug = String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || makeId('xai-cat');
+}
+
+function uniqueXaiCategoryId(name) {
+  const base = slugifyXaiCategoryName(name);
+  let id = base;
+  let i = 2;
+  const ids = new Set(xaiPromptCategories.map(cat => cat.id));
+  while (ids.has(id)) {
+    id = `${base}-${i}`;
+    i++;
+  }
+  return id;
+}
+
+function renderXaiPromptBuilder() {
+  const builder = document.getElementById('xaiPromptBuilder');
+  const referenceBuilder = document.getElementById('xaiReferenceBuilder');
+  const importCategory = document.getElementById('xaiImportCategory');
+  if (!builder || !importCategory) return;
+  const referenceCategories = xaiPromptCategories.filter(cat => cat.id === 'reference');
+  const editableCategories = xaiPromptCategories.filter(cat => cat.id !== 'reference');
+
+  if (referenceBuilder) {
+    referenceBuilder.innerHTML = referenceCategories.map(cat => renderXaiPromptCategory(cat)).join('');
+  }
+
+  builder.innerHTML = editableCategories.map(cat => renderXaiPromptCategory(cat)).join('');
+
+  importCategory.innerHTML = xaiPromptCategories
+    .map(cat => `<option value="${escHtml(cat.id)}">${escHtml(cat.name)}</option>`)
+    .join('');
+}
+
+function renderXaiPromptCategory(cat) {
+  const isEditing = editingXaiPromptCategoryIds.has(cat.id);
+  return `
+    <div class="prompt-builder-category">
+      <div class="prompt-builder-title">
+        <span>${escHtml(cat.name)}</span>
+        <div class="prompt-builder-title-actions">
+          <button type="button" class="prompt-keyword-edit" data-xai-action="edit-keywords" data-category-id="${escHtml(cat.id)}" aria-pressed="${isEditing}" title="${isEditing ? 'Finish deleting keywords' : 'Delete keywords in this category'}">${isEditing ? 'Done' : 'Edit keywords'}</button>
+          ${cat.locked
+            ? '<span class="prompt-category-lock">category fixed</span>'
+            : `<button type="button" class="prompt-category-delete" data-xai-action="delete-category" data-category-id="${escHtml(cat.id)}" aria-label="Delete category ${escHtml(cat.name)}" title="Delete category">×</button>`}
+        </div>
+      </div>
+      <div class="prompt-chip-list">
+        ${cat.keywords.length ? cat.keywords.map(keyword => {
+          const key = `${cat.id}:${keyword}`;
+          return `
+            <span class="prompt-chip-wrap${isEditing ? ' editing' : ''}">
+              <button type="button" class="prompt-chip${selectedXaiPromptKeywords.has(key) ? ' selected' : ''}" data-xai-action="toggle-keyword" data-category-id="${escHtml(cat.id)}" data-keyword="${escHtml(keyword)}" aria-pressed="${selectedXaiPromptKeywords.has(key)}">
+                ${escHtml(keyword)}
+              </button>
+              ${isEditing ? `<button type="button" class="prompt-chip-delete" data-xai-action="delete-keyword" data-category-id="${escHtml(cat.id)}" data-keyword="${escHtml(keyword)}" aria-label="Delete keyword ${escHtml(keyword)}" title="Delete keyword"${xaiKeywordDeletePending ? ' disabled' : ''}>×</button>` : ''}
+            </span>
+          `;
+        }).join('') : '<span class="prompt-chip-empty">No keywords yet. Import some below.</span>'}
+      </div>
+    </div>
+  `;
+}
+
+function handleXaiPromptBuilderClick(event) {
+  const control = event.target.closest('[data-xai-action]');
+  if (!control) return;
+  const categoryId = control.dataset.categoryId || '';
+  const keyword = control.dataset.keyword || '';
+
+  if (control.dataset.xaiAction === 'toggle-keyword') toggleXaiPromptKeyword(categoryId, keyword);
+  if (control.dataset.xaiAction === 'edit-keywords') toggleXaiKeywordEditMode(categoryId);
+  if (control.dataset.xaiAction === 'delete-keyword') deleteXaiPromptKeyword(categoryId, keyword);
+  if (control.dataset.xaiAction === 'delete-category') deleteXaiPromptCategory(categoryId);
+}
+
+function addXaiPromptCategory() {
+  const input = document.getElementById('xaiNewCategoryInput');
+  const name = input.value.trim();
+  if (!name) { showToast('Enter a category name first', 'error'); return; }
+  if (xaiPromptCategories.some(cat => cat.name.toLowerCase() === name.toLowerCase())) {
+    showToast('Category already exists', 'error');
+    return;
+  }
+
+  const category = { id: uniqueXaiCategoryId(name), name, keywords: [] };
+  xaiPromptCategories.push(category);
+  input.value = '';
+  saveXaiPromptCategories();
+  renderXaiPromptBuilder();
+  const importCategory = document.getElementById('xaiImportCategory');
+  if (importCategory) importCategory.value = category.id;
+  showToast('Category created', 'success');
+}
+
+function deleteXaiPromptCategory(categoryId) {
+  const cat = xaiPromptCategories.find(item => item.id === categoryId);
+  if (!cat) return;
+  if (cat.locked) { showToast('This category cannot be deleted', 'error'); return; }
+  if (!confirm(`Delete category "${cat.name}" and all its keywords?`)) return;
+
+  cat.keywords.forEach(keyword => selectedXaiPromptKeywords.delete(`${cat.id}:${keyword}`));
+  editingXaiPromptCategoryIds.delete(categoryId);
+  xaiPromptCategories = xaiPromptCategories.filter(item => item.id !== categoryId);
+  if (!xaiPromptCategories.length) {
+    xaiPromptCategories = normalizeXaiPromptCategories(null);
+  }
+  saveXaiPromptCategories();
+  renderXaiPromptBuilder();
+  showToast('Category deleted', 'success');
+}
+
+function toggleXaiPromptKeyword(categoryId, keyword) {
+  const key = `${categoryId}:${keyword}`;
+  if (selectedXaiPromptKeywords.has(key)) selectedXaiPromptKeywords.delete(key);
+  else selectedXaiPromptKeywords.add(key);
+  renderXaiPromptBuilder();
+}
+
+function toggleXaiKeywordEditMode(categoryId) {
+  if (editingXaiPromptCategoryIds.has(categoryId)) editingXaiPromptCategoryIds.delete(categoryId);
+  else editingXaiPromptCategoryIds.add(categoryId);
+  renderXaiPromptBuilder();
+}
+
+async function deleteXaiPromptKeyword(categoryId, keyword) {
+  if (xaiKeywordDeletePending) return;
+  const cat = xaiPromptCategories.find(item => item.id === categoryId);
+  if (!cat) return;
+  xaiKeywordDeletePending = true;
+  const previousKeywords = [...cat.keywords];
+  const selectionKey = `${categoryId}:${keyword}`;
+  const wasSelected = selectedXaiPromptKeywords.has(selectionKey);
+  cat.keywords = cat.keywords.filter(item => item !== keyword);
+  selectedXaiPromptKeywords.delete(selectionKey);
+  renderXaiPromptBuilder();
+  let saved = false;
+  try {
+    saved = await saveXaiPromptCategories();
+  } catch {
+    saved = false;
+  }
+  try {
+    if (!saved) {
+      const originalIndex = previousKeywords.indexOf(keyword);
+      const restoredKeywords = cat.keywords.filter(item => item !== keyword);
+      restoredKeywords.splice(Math.min(Math.max(originalIndex, 0), restoredKeywords.length), 0, keyword);
+      cat.keywords = restoredKeywords;
+      if (wasSelected) selectedXaiPromptKeywords.add(selectionKey);
+    }
+  } finally {
+    xaiKeywordDeletePending = false;
+    renderXaiPromptBuilder();
+  }
+  showToast(saved ? 'Keyword deleted' : 'Keyword could not be deleted', saved ? 'success' : 'error');
+}
+
+function importXaiPromptKeywords() {
+  const categoryId = document.getElementById('xaiImportCategory').value;
+  const input = document.getElementById('xaiImportInput');
+  const cat = xaiPromptCategories.find(item => item.id === categoryId);
+  if (!cat) return;
+  const keywords = input.value
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+  if (!keywords.length) { showToast('Enter comma-separated keywords first', 'error'); return; }
+
+  let added = 0;
+  const existing = new Set(cat.keywords.map(item => item.toLowerCase()));
+  for (const keyword of keywords) {
+    if (existing.has(keyword.toLowerCase())) continue;
+    cat.keywords.push(keyword);
+    existing.add(keyword.toLowerCase());
+    added++;
+  }
+
+  input.value = '';
+  saveXaiPromptCategories();
+  renderXaiPromptBuilder();
+  showToast(`${added} keyword${added === 1 ? '' : 's'} imported`, added ? 'success' : 'error');
+}
+
+function getSelectedXaiPromptContext() {
+  const grouped = [];
+  for (const cat of xaiPromptCategories) {
+    const selected = cat.keywords.filter(keyword => selectedXaiPromptKeywords.has(`${cat.id}:${keyword}`));
+    if (selected.length) grouped.push(`${cat.name}: ${selected.join(', ')}`);
+  }
+  return grouped.join('; ');
+}
+
+let activeMobilePanel = 'prompts';
+
+function isMobileLayout() {
+  return window.matchMedia('(max-width: 900px)').matches;
+}
+
+function updateMobileHeaderHeight() {
+  if (!isMobileLayout()) return;
+  const header = document.querySelector('header');
+  if (!header) return;
+  document.documentElement.style.setProperty('--mobile-header-height', `${Math.ceil(header.getBoundingClientRect().height)}px`);
+}
+
+function setPanelAvailability(panel, available) {
+  if (!panel) return;
+  panel.inert = !available;
+  panel.setAttribute('aria-hidden', String(!available));
+}
+
+function syncStudioPanelAccessibility() {
+  const isOpen = document.body.classList.contains('menu-open');
+  const mobile = isMobileLayout();
+  const leftAvailable = isOpen && (!mobile || activeMobilePanel !== 'settings');
+  const rightAvailable = isOpen && (!mobile || activeMobilePanel === 'settings');
+  setPanelAvailability(document.querySelector('.left-panel'), leftAvailable);
+  setPanelAvailability(document.querySelector('.right-panel'), rightAvailable);
+  setPanelAvailability(document.querySelector('.center-panel'), !(isOpen && mobile));
+}
+
+function activateOnEnterOrSpace(event, action) {
+  if (event.target !== event.currentTarget || !['Enter', ' '].includes(event.key)) return;
+  event.preventDefault();
+  action();
+}
+
+function switchMobilePanel(panel) {
+  if (!['prompts', 'references', 'settings'].includes(panel)) return;
+  activeMobilePanel = panel;
+  document.body.classList.remove('mobile-panel-prompts', 'mobile-panel-references', 'mobile-panel-settings');
+  document.body.classList.add(`mobile-panel-${panel}`, 'menu-open');
+
+  document.querySelectorAll('.mobile-drawer-tab[data-mobile-panel]').forEach(button => {
+    const isActive = button.dataset.mobilePanel === panel;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  });
+
+  document.getElementById('studioMenuButton')?.setAttribute('aria-expanded', 'true');
+  syncStudioPanelAccessibility();
+  requestAnimationFrame(updateMobileHeaderHeight);
+}
+
+function toggleStudioMenu() {
+  if (document.body.classList.contains('menu-open')) {
+    closeStudioMenu();
+    return;
+  }
+
+  if (isMobileLayout()) {
+    switchMobilePanel(activeMobilePanel);
+  } else {
+    document.body.classList.add('menu-open');
+    document.getElementById('studioMenuButton')?.setAttribute('aria-expanded', 'true');
+    syncStudioPanelAccessibility();
+  }
+}
+
+function closeStudioMenu() {
+  const activeElement = document.activeElement;
+  const restoreMenuFocus = !!activeElement?.closest?.('.left-panel, .right-panel, .mobile-drawer-tabs');
+  if (restoreMenuFocus) activeElement.blur();
+  document.body.classList.remove('menu-open');
+  document.getElementById('studioMenuButton')?.setAttribute('aria-expanded', 'false');
+  syncStudioPanelAccessibility();
+  if (restoreMenuFocus) {
+    requestAnimationFrame(() => document.getElementById('studioMenuButton')?.focus({ preventScroll: true }));
+  }
+}
+
+function returnToPromptEditor() {
+  closeStudioMenu();
+  if (!isMobileLayout()) return;
+  requestAnimationFrame(() => {
+    const promptBar = document.getElementById('promptBar');
+    const scroller = document.querySelector('.generate-area');
+    if (promptBar && scroller) {
+      const targetTop = promptBar.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 8;
+      scroller.scrollTo({ top: Math.max(0, targetTop), behavior: 'auto' });
+    }
+    requestAnimationFrame(() => document.getElementById('studioMenuButton')?.focus({ preventScroll: true }));
+  });
+}
+
+window.addEventListener('resize', () => {
+  if (isMobileLayout() && document.body.classList.contains('menu-open') && !document.body.matches('.mobile-panel-prompts, .mobile-panel-references, .mobile-panel-settings')) {
+    switchMobilePanel(activeMobilePanel);
+  }
+  updateMobileHeaderHeight();
+  syncStudioPanelAccessibility();
+});
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  const openModal = document.querySelector('.modal-overlay.show');
+  if (openModal) {
+    closeModal(openModal.id);
+    return;
+  }
+  if (document.body.classList.contains('menu-open')) closeStudioMenu();
+});
+requestAnimationFrame(() => {
+  updateMobileHeaderHeight();
+  syncStudioPanelAccessibility();
+});
+
+function openSettingsModal() {
+  const settingsAtlasEl = document.getElementById('settingsAtlasKeyInput');
+  const xaiTokenEl = document.getElementById('xaiTokenInput');
+  if (settingsAtlasEl) settingsAtlasEl.value = apiKey;
+  if (xaiTokenEl) xaiTokenEl.value = xaiAuthToken;
+  document.getElementById('settingsModal').classList.add('show');
+}
+
+function openPromptGeneratorModal(syncCurrentPrompt = false) {
+  document.getElementById('promptGeneratorModal').classList.add('show');
+  document.getElementById('xaiQuickButton').setAttribute('aria-expanded', 'true');
+  const idea = document.getElementById('xaiPromptIdea');
+  if (idea && (syncCurrentPrompt || !idea.value.trim())) idea.value = document.getElementById('promptTextarea').value.trim();
+  renderXaiPromptBuilder();
+  setTimeout(() => idea?.focus(), 0);
+}
+
+function useCurrentPromptAsIdea() {
+  document.getElementById('xaiPromptIdea').value = document.getElementById('promptTextarea').value.trim();
+}
+
+function clearXaiPromptIdea() {
+  const idea = document.getElementById('xaiPromptIdea');
+  if (!idea) return;
+  idea.value = '';
+  idea.focus();
+}
+
+function currentTargetModelLabel() {
+  const el = currentMode === 'video'
+    ? document.getElementById('videoModelSelect')
+    : document.getElementById('modelSelect');
+  return el?.value || '';
+}
+
+async function generatePromptWithXai() {
+  const ideaEl = document.getElementById('xaiPromptIdea');
+  const resultEl = document.getElementById('xaiPromptResult');
+  const btn = document.getElementById('xaiPromptGenerateBtn');
+  const idea = ideaEl.value.trim();
+  const selectedContext = getSelectedXaiPromptContext();
+  const enrichedIdea = [idea, selectedContext ? `Selected details: ${selectedContext}` : '']
+    .filter(Boolean)
+    .join('\n');
+  if (!xaiAuthToken) { showToast('Add your xAI auth token in Settings first', 'error'); return; }
+  if (!enrichedIdea) { showToast('Enter an idea or select keywords first', 'error'); return; }
+
+  try {
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    const resp = await fetch(`${SERVER}/api/xai/prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idea: enrichedIdea, mode: currentMode, targetModel: currentTargetModelLabel() }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    resultEl.value = data.prompt || '';
+    showToast('Prompt generated', 'success');
+  } catch (e) {
+    showToast('xAI prompt failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate Prompt';
+  }
+}
+
+function applyXaiPrompt() {
+  const prompt = document.getElementById('xaiPromptResult').value.trim();
+  if (!prompt) { showToast('Generate a prompt first', 'error'); return; }
+  document.getElementById('promptTextarea').value = prompt;
+  scheduleWorkspaceSave();
+  closeModal('promptGeneratorModal');
+  showToast('Prompt inserted', 'success');
+}
+
+// ============================================================
+// PROMPTS
+// ============================================================
+function renderPrompts() {
+  const el = document.getElementById('promptList');
+  ensurePromptFolderShape();
+  const query = librarySearchQuery;
+  if (!prompts.length && !promptFolders.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 6px 8px">No saved prompts yet.</div>';
+    return;
+  }
+  const promptMatches = prompt => !query || `${prompt.name} ${prompt.text}`.toLowerCase().includes(query);
+  const folderMatches = folder => !query
+    || folder.name.toLowerCase().includes(query)
+    || prompts.some(prompt => prompt.folderId === folder.id && promptMatches(prompt))
+    || getChildren(promptFolders, folder.id).some(folderMatches);
+  const rootFolders = getChildren(promptFolders, null).filter(folderMatches);
+
+  function countPromptsInBranch(folderId) {
+    const direct = prompts.filter(p => p.folderId === folderId).length;
+    const childCount = getChildren(promptFolders, folderId).reduce((sum, child) => sum + countPromptsInBranch(child.id), 0);
+    return direct + childCount;
+  }
+
+  function renderPromptFolderNode(folder, depth = 0) {
+    const folderNameMatches = query && folder.name.toLowerCase().includes(query);
+    const items = prompts.filter(p => p.folderId === folder.id && (folderNameMatches || promptMatches(p)))
+      .sort((a, b) => Number(isFavorite('prompts', b.id)) - Number(isFavorite('prompts', a.id)));
+    const children = getChildren(promptFolders, folder.id).filter(folderMatches);
+    const isOpen = query ? true : openPromptFolderIds.has(folder.id);
+    const count = countPromptsInBranch(folder.id);
+
+    return `
+      <div class="prompt-folder-item${isOpen ? ' open' : ''}" id="prompt-folder-${folder.id}">
+        <div class="prompt-folder-header">
+          <div class="prompt-folder-toggle" role="button" tabindex="0" aria-expanded="${isOpen}" onclick="togglePromptFolder('${folder.id}')" onkeydown="activateOnEnterOrSpace(event, () => togglePromptFolder('${folder.id}'))">
+            <span class="folder-icon">📝</span>
+            <span class="prompt-folder-name">${escHtml(folder.name)}</span>
+            <span class="prompt-folder-count">${count}</span>
+            <span class="prompt-folder-chevron">▶</span>
+          </div>
+          <button class="icon-btn" onclick="event.stopPropagation();deletePromptFolder('${folder.id}')" title="Delete folder">✕</button>
+        </div>
+        <div class="prompt-folder-prompts">
+          ${children.length ? `<div class="nested-tree">${children.map(child => renderPromptFolderNode(child, depth + 1)).join('')}</div>` : ''}
+          ${items.length ? items.map(p => `
+            <div class="prompt-item${selectedPromptIds.has(p.id) ? ' active' : ''}">
+              <label class="prompt-select-target" onclick="event.stopPropagation()" title="Queue select">
+                <input class="prompt-select" type="checkbox" ${selectedPromptIds.has(p.id) ? 'checked' : ''} onchange="togglePromptSelection('${p.id}', this.checked)">
+                <span class="sr-only">Select ${escHtml(p.name)} for queue</span>
+              </label>
+              <div class="prompt-use-target" role="button" tabindex="0" onclick="usePrompt('${p.id}')" onkeydown="activateOnEnterOrSpace(event, () => usePrompt('${p.id}'))">
+                <div style="flex:1;overflow:hidden">
+                  <div class="prompt-name">${escHtml(p.name)}</div>
+                  <div class="prompt-text">${escHtml(p.text)}</div>
+                </div>
+              </div>
+              <div class="prompt-actions">
+                <button class="favorite-action${isFavorite('prompts', p.id) ? ' active' : ''}" onclick="event.stopPropagation();toggleFavorite('prompts','${p.id}')" title="${isFavorite('prompts', p.id) ? 'Remove favorite' : 'Add favorite'}" aria-label="${isFavorite('prompts', p.id) ? 'Remove prompt from favorites' : 'Add prompt to favorites'}">★</button>
+                <button class="icon-btn use prompt-action-apply" onclick="event.stopPropagation();usePrompt('${p.id}')" title="Use">↑</button>
+                <button class="icon-btn use prompt-action-move" onclick="event.stopPropagation();movePrompt('${p.id}')" title="Move">↔</button>
+                <button class="icon-btn prompt-action-delete" onclick="event.stopPropagation();deletePrompt('${p.id}')" title="Delete">✕</button>
+              </div>
+            </div>
+          `).join('') : ''}
+          ${!children.length && !items.length ? '<div style="font-size:11px;color:var(--muted);padding:8px">No prompts in this folder yet.</div>' : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  el.innerHTML = rootFolders.map(folder => renderPromptFolderNode(folder)).join('')
+    || '<div style="font-size:11px;color:var(--muted);padding:8px">No matching prompts or folders.</div>';
+}
+
+function buildPromptFolderOptions(selectedId = '', includeTopLevel = false) {
+  ensurePromptFolderShape();
+  return buildFolderOptions(promptFolders, selectedId, includeTopLevel, 'Top level');
+}
+
+function togglePromptFolder(id) {
+  const restoreFocus = document.activeElement?.classList.contains('prompt-folder-toggle');
+  if (openPromptFolderIds.has(id)) openPromptFolderIds.delete(id);
+  else openPromptFolderIds.add(id);
+  renderPrompts();
+  if (restoreFocus) {
+    requestAnimationFrame(() => document.getElementById(`prompt-folder-${id}`)?.querySelector('.prompt-folder-toggle')?.focus({ preventScroll: true }));
+  }
+  scheduleWorkspaceSave();
+}
+
+function togglePromptSelection(id, checked) {
+  if (checked) selectedPromptIds.add(id);
+  else selectedPromptIds.delete(id);
+  renderPrompts();
+}
+
+function usePrompt(id) {
+  const prompt = prompts.find(p => String(p.id) === String(id));
+  if (prompt) {
+    document.getElementById('promptTextarea').value = prompt.text;
+    scheduleWorkspaceSave();
+    if (isMobileLayout() && document.body.classList.contains('menu-open')) {
+      returnToPromptEditor();
+    }
+  }
+}
+
+function clearCurrentPrompt() {
+  document.getElementById('promptTextarea').value = '';
+  scheduleWorkspaceSave();
+}
+
+function deletePrompt(id) {
+  const prompt = prompts.find(p => String(p.id) === String(id));
+  if (!prompt || !confirm(`Delete prompt "${prompt.name}"?`)) return;
+  selectedPromptIds.delete(id);
+  prompts = prompts.filter(p => String(p.id) !== String(id));
+  favorites.prompts = favorites.prompts.filter(item => String(item) !== String(id));
+  saveData();
+  renderPrompts();
+}
+
+function getPromptFolderBranchIds(folderId) {
+  const ids = [folderId];
+  const children = getChildren(promptFolders, folderId);
+  children.forEach(child => {
+    ids.push(...getPromptFolderBranchIds(child.id));
+  });
+  return ids;
+}
+
+function deletePromptFolder(id) {
+  const folder = promptFolders.find(f => String(f.id) === String(id));
+  if (!folder) return;
+
+  const branchIds = getPromptFolderBranchIds(folder.id);
+  const childFolderCount = Math.max(0, branchIds.length - 1);
+  const promptCount = prompts.filter(p => branchIds.includes(p.folderId)).length;
+  const label = childFolderCount
+    ? `"${folder.name}" mit ${childFolderCount} Unterordner${childFolderCount === 1 ? '' : 'n'} und ${promptCount} Prompt${promptCount === 1 ? '' : 's'}`
+    : `"${folder.name}" mit ${promptCount} Prompt${promptCount === 1 ? '' : 's'}`;
+
+  if (!confirm(`Prompt-Ordner ${label} wirklich löschen?`)) return;
+
+  prompts
+    .filter(p => branchIds.includes(p.folderId))
+    .forEach(p => selectedPromptIds.delete(p.id));
+  const deletedPromptIds = new Set(prompts.filter(p => branchIds.includes(p.folderId)).map(p => String(p.id)));
+  favorites.prompts = favorites.prompts.filter(id => !deletedPromptIds.has(String(id)));
+  prompts = prompts.filter(p => !branchIds.includes(p.folderId));
+  promptFolders = promptFolders.filter(f => !branchIds.includes(f.id));
+  branchIds.forEach(branchId => openPromptFolderIds.delete(branchId));
+
+  ensurePromptFolderShape();
+  saveData();
+  renderPrompts();
+  showToast('Prompt folder deleted', 'success');
+}
+
+function openSavePromptModal() {
+  ensurePromptFolderShape();
+  document.getElementById('promptNameInput').value = '';
+  document.getElementById('promptTextInput').value = document.getElementById('promptTextarea').value;
+  document.getElementById('promptFolderSelect').innerHTML = buildPromptFolderOptions(promptFolders[0]?.id);
+  document.getElementById('saveModal').classList.add('show');
+}
+
+function saveCurrentPrompt() {
+  document.getElementById('promptNameInput').value = '';
+  document.getElementById('promptTextInput').value = document.getElementById('promptTextarea').value;
+  document.getElementById('promptFolderSelect').innerHTML = buildPromptFolderOptions(promptFolders[0]?.id);
+  document.getElementById('saveModal').classList.add('show');
+}
+
+async function saveImageDefaults() {
+  const defaults = currentImageDefaults();
+  await serverSet('atlasImageDefaults', defaults);
+  showToast('Default image options saved', 'success');
+}
+
+function confirmSavePrompt() {
+  const name = document.getElementById('promptNameInput').value.trim();
+  const text = document.getElementById('promptTextInput').value.trim();
+  const folderId = document.getElementById('promptFolderSelect').value || promptFolders[0]?.id;
+  if (!name || !text) { showToast('Name and prompt required', 'error'); return; }
+  prompts.unshift({ id: makeId('prompt'), name, text, folderId });
+  saveData();
+  renderPrompts();
+  closeModal('saveModal');
+  showToast('Prompt saved!', 'success');
+}
+
+function addPromptFolder() {
+  document.getElementById('promptFolderNameInput').value = '';
+  document.getElementById('promptFolderParentSelect').innerHTML = buildPromptFolderOptions('', true);
+  document.getElementById('promptFolderModal').classList.add('show');
+}
+
+function confirmAddPromptFolder() {
+  const name = document.getElementById('promptFolderNameInput').value.trim();
+  const parentId = document.getElementById('promptFolderParentSelect').value || null;
+  if (!name) return;
+  if (promptFolders.some(f => String(f.parentId || '') === String(parentId || '') && f.name.toLowerCase() === name.toLowerCase())) {
+    showToast('Prompt folder already exists', 'error');
+    return;
+  }
+  const newFolder = { id: makeId('pf'), name, parentId };
+  promptFolders.push(newFolder);
+  if (parentId) openPromptFolderIds.add(parentId);
+  openPromptFolderIds.add(newFolder.id);
+  saveData();
+  renderPrompts();
+  const folderSelect = document.getElementById('promptFolderSelect');
+  if (folderSelect) folderSelect.innerHTML = buildPromptFolderOptions(promptFolders[promptFolders.length - 1]?.id);
+  const importFolderSelect = document.getElementById('promptImportFolderSelect');
+  if (importFolderSelect) importFolderSelect.innerHTML = buildPromptFolderOptions(promptFolders[promptFolders.length - 1]?.id);
+  closeModal('promptFolderModal');
+  showToast('Prompt folder created!', 'success');
+}
+
+function openPromptImportModal() {
+  ensurePromptFolderShape();
+  document.getElementById('promptImportFile').value = '';
+  document.getElementById('promptImportText').value = '';
+  document.getElementById('promptImportFolderSelect').innerHTML = buildPromptFolderOptions(promptFolders[0]?.id);
+  document.getElementById('promptImportModal').classList.add('show');
+}
+
+function loadPromptImportFile(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('promptImportText').value = String(e.target?.result || '');
+  };
+  reader.readAsText(file);
+}
+
+function parseImportedPrompts(raw) {
+  const text = String(raw || '').replace(/\r\n/g, '\n').trim();
+  if (!text) return [];
+
+  const lines = text.split('\n');
+  const items = [];
+  let current = [];
+  let sawNumbering = false;
+
+  function pushCurrent() {
+    const joined = current.join('\n').trim();
+    if (!joined) {
+      current = [];
+      return;
+    }
+    items.push(joined);
+    current = [];
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    const numberedOnly = line.match(/^(\d+)\s*[\.\)\-:]?\s*$/);
+    const numberedInline = line.match(/^(\d+)\s*[\.\)\-:]\s+(.+)$/);
+
+    if (numberedOnly) {
+      sawNumbering = true;
+      pushCurrent();
+      continue;
+    }
+
+    if (numberedInline) {
+      sawNumbering = true;
+      pushCurrent();
+      current.push(numberedInline[2].trim());
+      continue;
+    }
+
+    if (!sawNumbering && line === '') {
+      pushCurrent();
+      continue;
+    }
+
+    if (sawNumbering && line === '' && !current.length) {
+      continue;
+    }
+
+    current.push(rawLine);
+  }
+  pushCurrent();
+
+  return items
+    .map(item => item.replace(/^\s*\d+\s*[\.\)\-:]\s*/, '').trim())
+    .filter(Boolean);
+}
+
+function sanitizeImportedFolderName(value) {
+  const clean = String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .split('/')
+    .pop()
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean || 'Imported';
+}
+
+function parseStructuredPromptImport(raw) {
+  const text = String(raw || '').replace(/\r\n/g, '\n').trim();
+  if (!text) return [];
+
+  const lines = text.split('\n');
+  const groups = [];
+  let currentCategory = '';
+  let currentSaveAs = '';
+  let buffer = [];
+
+  function flushGroup() {
+    const cleanedLines = buffer
+      .map(line => String(line || '').trim())
+      .filter(Boolean)
+      .filter(line => !/^neue\s+\d+\s+kategorien$/i.test(line));
+    const joined = cleanedLines.join('\n').trim();
+    if (!joined) {
+      buffer = [];
+      return;
+    }
+
+    const promptsInGroup = cleanedLines.length > 1
+      ? cleanedLines
+      : parseImportedPrompts(joined.replace(/^text\s*/i, '').trim());
+    if (promptsInGroup.length) {
+      groups.push({
+        category: currentCategory || '',
+        saveAs: currentSaveAs || '',
+        folderName: sanitizeImportedFolderName(currentSaveAs || currentCategory || 'Imported'),
+        prompts: promptsInGroup,
+      });
+    }
+    buffer = [];
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    const categoryMatch = line.match(/^Kategorie:\s*(.+)$/i);
+    const saveAsMatch = line.match(/^Speichere\s+als:\s*(.+)$/i);
+
+    if (categoryMatch) {
+      flushGroup();
+      currentCategory = categoryMatch[1].trim();
+      currentSaveAs = '';
+      continue;
+    }
+
+    if (saveAsMatch) {
+      flushGroup();
+      currentSaveAs = saveAsMatch[1].trim();
+      continue;
+    }
+
+    buffer.push(rawLine);
+  }
+
+  flushGroup();
+  return groups.filter(group => group.prompts.length);
+}
+
+function buildImportedPromptName(text, index) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  const short = clean.split(' ').slice(0, 6).join(' ');
+  return short ? `${index + 1}. ${short.slice(0, 42)}` : `Imported Prompt ${index + 1}`;
+}
+
+function confirmImportPrompts() {
+  const raw = document.getElementById('promptImportText').value;
+  const topLevelFolderId = document.getElementById('promptImportFolderSelect').value || promptFolders[0]?.id;
+  const structuredGroups = parseStructuredPromptImport(raw);
+
+  if (!structuredGroups.length) {
+    const parsed = parseImportedPrompts(raw);
+    if (!parsed.length) {
+      showToast('No prompts found to import', 'error');
+      return;
+    }
+
+    let added = 0;
+    parsed.forEach((text, index) => {
+      if (prompts.find(p => p.text === text)) return;
+      prompts.unshift({
+        id: makeId('prompt'),
+        name: buildImportedPromptName(text, index),
+        text,
+        folderId: topLevelFolderId,
+      });
+      added++;
+    });
+
+    saveData();
+    renderPrompts();
+    closeModal('promptImportModal');
+    showToast(`${added} prompt${added === 1 ? '' : 's'} imported`, 'success');
+    return;
+  }
+
+  let added = 0;
+  let moved = 0;
+  structuredGroups.forEach(group => {
+    let categoryFolder = null;
+    if (group.category) {
+      categoryFolder = promptFolders.find(f =>
+        String(f.parentId || '') === String(topLevelFolderId || '') &&
+        f.name.toLowerCase() === group.category.toLowerCase()
+      );
+
+      if (!categoryFolder) {
+        categoryFolder = {
+          id: makeId('pf'),
+          name: group.category,
+          parentId: topLevelFolderId || null,
+        };
+        promptFolders.push(categoryFolder);
+      }
+    }
+
+    const targetParentId = categoryFolder?.id || topLevelFolderId || null;
+    let subfolder = promptFolders.find(f =>
+      String(f.parentId || '') === String(targetParentId || '') &&
+      f.name.toLowerCase() === group.folderName.toLowerCase()
+    );
+
+    if (!subfolder) {
+      subfolder = {
+        id: makeId('pf'),
+        name: group.folderName,
+        parentId: targetParentId,
+      };
+      promptFolders.push(subfolder);
+    }
+    if (topLevelFolderId) openPromptFolderIds.add(topLevelFolderId);
+    if (categoryFolder) openPromptFolderIds.add(categoryFolder.id);
+    openPromptFolderIds.add(subfolder.id);
+
+    group.prompts.forEach((text, index) => {
+      const existingPrompt = prompts.find(p => p.text === text);
+      if (existingPrompt) {
+        if (existingPrompt.folderId !== subfolder.id) {
+          existingPrompt.folderId = subfolder.id;
+          moved++;
+        }
+        return;
+      }
+      prompts.unshift({
+        id: makeId('prompt'),
+        name: buildImportedPromptName(text, index),
+        text,
+        folderId: subfolder.id,
+      });
+      added++;
+    });
+  });
+
+  if (!added && !moved) {
+    showToast('No prompts found to import', 'error');
+    return;
+  }
+
+  saveData();
+  renderPrompts();
+  closeModal('promptImportModal');
+  const parts = [];
+  if (added) parts.push(`${added} imported`);
+  if (moved) parts.push(`${moved} organized`);
+  showToast(`Prompts ready: ${parts.join(' · ')}`, 'success');
+}
+
+function movePrompt(id) {
+  const item = prompts.find(p => String(p.id) === String(id));
+  if (!item) return;
+  const currentFolder = getFolderPath(promptFolders, item.folderId) || 'General';
+  const target = prompt(`Move "${item.name}" to folder path:`, currentFolder);
+  if (!target || !target.trim()) return;
+
+  const parts = target.split('/').map(x => x.trim()).filter(Boolean);
+  if (!parts.length) return;
+
+  let parentId = null;
+  let folder = null;
+  for (const part of parts) {
+    folder = promptFolders.find(f => String(f.parentId || '') === String(parentId || '') && f.name.toLowerCase() === part.toLowerCase());
+    if (!folder) {
+      folder = { id: makeId('pf'), name: part, parentId };
+      promptFolders.push(folder);
+    }
+    openPromptFolderIds.add(folder.id);
+    parentId = folder.id;
+  }
+
+  item.folderId = folder.id;
+  saveData();
+  renderPrompts();
+  showToast('Prompt moved!', 'success');
+}
+
+// ============================================================
+// FOLDERS
+// ============================================================
+function renderFolders() {
+  const el = document.getElementById('folderList');
+  ensureReferenceFolderShape();
+  if (!folders.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 6px">No folders yet.</div>';
+    return;
+  }
+  const query = librarySearchQuery;
+  const folderMatches = folder => !query
+    || folder.name.toLowerCase().includes(query)
+    || folder.images.some(image => String(image.name || '').toLowerCase().includes(query))
+    || getChildren(folders, folder.id).some(folderMatches);
+  const rootFolders = getChildren(folders, null).filter(folderMatches);
+
+  function renderFolderNode(folder) {
+    const fi = folders.findIndex(x => x.id === folder.id);
+    const children = getChildren(folders, folder.id).filter(folderMatches);
+    const selCount = folder.images.filter(img => {
+      const src = getImageSrc(img);
+      return src && refImages.some(r => getRefSrc(r) === src);
+    }).length;
+    const isOpen = query ? true : openReferenceFolderIds.has(folder.id);
+    return `
+    <div class="folder-item${isOpen ? ' open' : ''}" id="folder-${folder.id}">
+      <div class="folder-header" role="button" tabindex="0" aria-expanded="${isOpen}" onclick="toggleFolder('${folder.id}')" onkeydown="activateOnEnterOrSpace(event, () => toggleFolder('${folder.id}'))">
+        <span class="folder-icon">📁</span>
+        <span class="folder-name">${escHtml(folder.name)}</span>
+        <span class="folder-count" id="folder-count-${fi}">${selCount ? selCount + '/' : ''}${folder.images.length}</span>
+        <span class="folder-chevron">▶</span>
+      </div>
+      <div class="folder-images" id="folderImages-${fi}"></div>
+      <div class="folder-children">
+        ${children.map(child => renderFolderNode(child)).join('')}
+      </div>
+    </div>`;
+  }
+
+  el.innerHTML = rootFolders.map(folder => renderFolderNode(folder)).join('')
+    || '<div style="font-size:11px;color:var(--muted);padding:8px">No matching reference folders.</div>';
+
+  // Now populate each folder's image strip using real DOM nodes
+  folders.forEach((f, fi) => {
+    const imagesEl = document.getElementById(`folderImages-${fi}`);
+    if (!imagesEl) return;
+    imagesEl.appendChild(makeFolderGroupBtn(fi));
+    f.images.forEach((img, ii) => imagesEl.appendChild(buildThumbNode(fi, ii, img)));
+    imagesEl.appendChild(makeAddBtn(fi));
+  });
+}
+
+// Build a thumb DOM node directly — used when we need to append without innerHTML
+function buildThumbNode(fi, ii, img) {
+  const src = getImageSrc(img);
+  const isSelected = src && refImages.some(r => getRefSrc(r) === src);
+  const selIdx = refImages.findIndex(r => getRefSrc(r) === src);
+  const orderNum = selIdx >= 0 ? selIdx + 1 : '';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'folder-thumb-wrap';
+
+  const div = document.createElement('div');
+  div.className = `folder-thumb${isSelected ? ' selected' : ''}`;
+  div.id = `thumb-${fi}-${ii}`;
+  div.dataset.fi = fi;
+  div.dataset.ii = ii;
+  div.title = img.name;
+  div.tabIndex = 0;
+  div.setAttribute('role', 'button');
+  div.setAttribute('aria-pressed', String(isSelected));
+  div.setAttribute('aria-label', `${isSelected ? 'Remove' : 'Select'} reference ${img.name}`);
+  div.onclick = () => toggleRefImage(fi, ii);
+  div.onkeydown = event => activateOnEnterOrSpace(event, () => toggleRefImage(fi, ii));
+
+  const imgEl = document.createElement('img');
+  imgEl.src = src;   // set src directly, never via innerHTML
+  imgEl.alt = img.name;
+  div.appendChild(imgEl);
+
+  const badge = document.createElement('span');
+  badge.className = 'sel-badge';
+  badge.textContent = orderNum;
+  div.appendChild(badge);
+  wrap.appendChild(div);
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'del-btn';
+  delBtn.title = 'Remove';
+  delBtn.setAttribute('aria-label', `Delete reference ${img.name}`);
+  delBtn.textContent = '✕';
+  delBtn.onclick = (e) => { e.stopPropagation(); deleteImageFromFolder(fi, ii); };
+  wrap.appendChild(delBtn);
+
+  return wrap;
+}
+
+// Rebuild only the thumbs inside one folder's image strip, keeping folder open/closed state intact
+function rebuildFolderImages(fi) {
+  const folder = folders[fi];
+  const imagesEl = document.getElementById(`folderImages-${fi}`);
+  if (!imagesEl) { renderFolders(); return; }
+
+  // Remove old thumbs and add-btn
+  imagesEl.querySelectorAll('.folder-thumb-wrap').forEach(t => t.remove());
+  imagesEl.querySelector('.folder-group-create')?.remove();
+  const oldAddBtn = imagesEl.querySelector('.folder-add-btn');
+  if (oldAddBtn) oldAddBtn.remove();
+
+  imagesEl.appendChild(makeFolderGroupBtn(fi));
+
+  // Insert fresh thumbs as real DOM nodes (src set directly, no innerHTML)
+  folder.images.forEach((img, ii) => {
+    imagesEl.appendChild(buildThumbNode(fi, ii, img));
+  });
+
+  // Re-add the + button
+  imagesEl.appendChild(makeAddBtn(fi));
+
+  // Update counter badge
+  const selCount = folder.images.filter(img => {
+    const src = getImageSrc(img);
+    return src && refImages.some(r => getRefSrc(r) === src);
+  }).length;
+  const countEl = document.getElementById(`folder-count-${fi}`);
+  if (countEl) countEl.textContent = `${selCount ? selCount + '/' : ''}${folder.images.length}`;
+}
+
+function makeFolderGroupBtn(fi) {
+  const folder = folders[fi];
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'folder-group-create';
+  button.disabled = !folder?.images?.length;
+  button.textContent = folder?.images?.length > 10 ? '+ Group · choose 10' : `+ Group · ${folder?.images?.length || 0} images`;
+  button.title = folder?.images?.length > 10 ? 'Choose up to 10 images for a reference group' : 'Save this folder as a reference group';
+  button.onclick = () => openFolderReferenceGroupModal(fi);
+  return button;
+}
+
+function makeAddBtn(fi) {
+  const btn = document.createElement('div');
+  btn.className = 'folder-add-btn';
+  btn.title = 'Add images';
+  btn.textContent = '＋';
+  btn.tabIndex = 0;
+  btn.setAttribute('role', 'button');
+  btn.setAttribute('aria-label', 'Add reference images');
+
+  const openPicker = () => {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.multiple = true;
+    // Keep it in DOM so Firefox/iOS reliably fire "change"
+    inp.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+    document.body.appendChild(inp);
+    const cleanup = () => { try { document.body.removeChild(inp); } catch(e) {} };
+    inp.onchange = () => addImagesToFolder(fi, inp, cleanup);
+    // Safety GC in case no event fires
+    setTimeout(() => { if (document.body.contains(inp)) cleanup(); }, 60000);
+    inp.click();
+  };
+
+  btn.addEventListener('click', openPicker);
+  btn.addEventListener('keydown', event => activateOnEnterOrSpace(event, openPicker));
+
+  return btn;
+}
+
+function patchThumb(fi, ii) {
+  const folder = folders[fi];
+  if (!folder) return;
+
+  // Update each thumb in this folder (selection ring + order numbers)
+  folder.images.forEach((img2, ii2) => {
+    const el = document.getElementById(`thumb-${fi}-${ii2}`);
+    if (!el) return;
+    const selIdx2 = refImages.findIndex(r => getRefSrc(r) === getImageSrc(img2));
+    const isSelected2 = selIdx2 >= 0;
+    el.className = `folder-thumb${isSelected2 ? ' selected' : ''}`;
+    el.setAttribute('aria-pressed', String(isSelected2));
+    el.setAttribute('aria-label', `${isSelected2 ? 'Remove' : 'Select'} reference ${img2.name}`);
+    const badge = el.querySelector('.sel-badge');
+    if (badge) badge.textContent = isSelected2 ? String(selIdx2 + 1) : '';
+  });
+
+  // Counter badge (selected/total)
+  const selCount = folder.images.filter(img => {
+    const src = getImageSrc(img);
+    return src && refImages.some(r => getRefSrc(r) === src);
+  }).length;
+  const countEl = document.getElementById(`folder-count-${fi}`);
+  if (countEl) countEl.textContent = `${selCount ? selCount + '/' : ''}${folder.images.length}`;
+}
+
+function toggleFolder(id) {
+  const restoreFocus = document.activeElement?.classList.contains('folder-header');
+  if (openReferenceFolderIds.has(id)) openReferenceFolderIds.delete(id);
+  else openReferenceFolderIds.add(id);
+  renderFolders();
+  if (restoreFocus) {
+    requestAnimationFrame(() => document.getElementById(`folder-${id}`)?.querySelector('.folder-header')?.focus({ preventScroll: true }));
+  }
+  scheduleWorkspaceSave();
+}
+
+function addFolder() {
+  document.getElementById('folderNameInput').value = '';
+  document.getElementById('folderParentSelect').innerHTML = buildFolderOptions(folders, '', true);
+  document.getElementById('folderModal').classList.add('show');
+}
+
+function confirmAddFolder() {
+  const name = document.getElementById('folderNameInput').value.trim();
+  const parentId = document.getElementById('folderParentSelect').value || null;
+  if (!name) return;
+  if (folders.some(f => String(f.parentId || '') === String(parentId || '') && f.name.toLowerCase() === name.toLowerCase())) {
+    showToast('Folder already exists', 'error');
+    return;
+  }
+  const newFolder = { id: makeId('rf'), name, parentId, images: [] };
+  folders.push(newFolder);
+  if (parentId) openReferenceFolderIds.add(parentId);
+  openReferenceFolderIds.add(newFolder.id);
+  saveData();
+  renderFolders();
+  closeModal('folderModal');
+}
+
+async function addImagesToFolder(fi, input, onDone) {
+  const files = Array.from(input.files || []);
+  if (!files.length) { if (onDone) onDone(); return; }
+
+  const folder = folders[fi];
+  if (!folder) { showToast('Folder not found', 'error'); if (onDone) onDone(); return; }
+
+  const imagesEl = document.getElementById(`folderImages-${fi}`);
+  const folderEl  = document.getElementById(`folder-${folder.id}`);
+
+  // Ensure folder is open immediately for feedback
+  openReferenceFolderIds.add(folder.id);
+  if (folderEl && !folderEl.classList.contains('open')) folderEl.classList.add('open');
+
+  let loaded = 0;
+  let failed = 0;
+
+  for (const file of files) {
+    try {
+      let src = '';
+      try {
+        src = await uploadRefFileToServer(file);
+      } catch {
+        const dataUrl = await fileToDataUrl(file);
+        if (!dataUrl.startsWith('data:image/')) throw new Error('Not an image');
+        src = dataUrl;
+      }
+      folder.images.push({ src, name: file.name });
+
+      // Append just this new thumb
+      if (imagesEl) {
+        const oldAdd = imagesEl.querySelector('.folder-add-btn');
+        if (oldAdd) oldAdd.remove();
+        const ii = folder.images.length - 1;
+        imagesEl.appendChild(buildThumbNode(fi, ii, folder.images[ii]));
+        imagesEl.appendChild(makeAddBtn(fi));
+      }
+      loaded++;
+    } catch (err) {
+      failed++;
+      logError(`Could not load image: ${file.name}`, { raw: err.message });
+    }
+  }
+
+  saveData();
+  rebuildFolderImages(fi); // ensure order badges + count are correct
+  renderRefStrip();
+  if (failed) showToast(`Added ${loaded}, ${failed} failed`, 'error');
+  else showToast(`Added ${loaded} image${loaded>1?'s':''}`, 'success');
+  if (onDone) onDone();
+}
+
+async function deleteImageFromFolder(fi, ii) {
+  const img = folders[fi]?.images[ii];
+  if (!img || !confirm(`Delete reference "${img.name || 'Image'}" from this folder${getImageSrc(img).startsWith('/refs/') ? ' and the server' : ''}?`)) return;
+  const src = getImageSrc(img);
+  const refIdx = refImages.findIndex(r => getRefSrc(r) === src);
+  if (refIdx >= 0) refImages.splice(refIdx, 1);
+  folders[fi].images.splice(ii, 1);
+  removeReferenceFromGroups(src);
+  if (src.startsWith('/refs/')) {
+    const filename = src.split('/').pop();
+    try { await fetch(`${SERVER}/api/ref/${encodeURIComponent(filename)}`, { method: 'DELETE' }); } catch {}
+  }
+  saveData();
+  rebuildFolderImages(fi);
+  renderRefStrip();
+  scheduleWorkspaceSave();
+}
+
+function toggleRefImage(fi, ii) {
+  const img = folders[fi]?.images[ii];
+  if (!img) return;
+  const src = getImageSrc(img);
+  if (!src) return;
+  const idx = refImages.findIndex(r => getRefSrc(r) === src);
+  if (idx >= 0) {
+    refImages.splice(idx, 1);
+  } else {
+    if (refImages.length >= 10) {
+      showToast('Max 10 reference images can be sent to API', 'error');
+      return;
+    }
+    refImages.push({ src, name: img.name });
+  }
+  // Patch only this folder's thumbs in-place — folder stays open
+  patchThumb(fi, ii);
+  renderRefStrip();
+  scheduleWorkspaceSave();
+}
+
+function sameReferenceSelection(images) {
+  if (!Array.isArray(images) || images.length !== refImages.length) return false;
+  return images.every((image, index) => getRefSrc(image) === getRefSrc(refImages[index]));
+}
+
+function renderReferenceGroups() {
+  const list = document.getElementById('referenceGroupList');
+  const saveButton = document.getElementById('saveReferenceGroupButton');
+  if (!list || !saveButton) return;
+  saveButton.disabled = refImages.length === 0 || refImages.length > 10;
+  list.replaceChildren();
+
+  const visibleGroups = referenceGroups
+    .filter(group => !librarySearchQuery || group.name.toLowerCase().includes(librarySearchQuery))
+    .sort((a, b) => Number(isFavorite('groups', b.id)) - Number(isFavorite('groups', a.id)));
+  if (!visibleGroups.length) {
+    const empty = document.createElement('span');
+    empty.className = 'reference-group-empty';
+    empty.textContent = librarySearchQuery
+      ? 'No matching reference groups.'
+      : 'Select up to 10 reference images, then save them as a one-click group.';
+    list.appendChild(empty);
+    return;
+  }
+
+  visibleGroups.forEach(group => {
+    const card = document.createElement('div');
+    card.className = `reference-group-card${sameReferenceSelection(group.images) ? ' active' : ''}`;
+
+    const applyButton = document.createElement('button');
+    applyButton.type = 'button';
+    applyButton.className = 'reference-group-apply';
+    applyButton.setAttribute('aria-label', `Use reference group ${group.name} with ${group.images.length} images`);
+    applyButton.onclick = () => applyReferenceGroup(group.id);
+
+    const preview = document.createElement('span');
+    preview.className = 'reference-group-preview';
+    group.images.slice(0, 3).forEach(image => {
+      const img = document.createElement('img');
+      img.src = getRefSrc(image);
+      img.alt = '';
+      preview.appendChild(img);
+    });
+    applyButton.appendChild(preview);
+
+    const copy = document.createElement('span');
+    copy.className = 'reference-group-copy';
+    const name = document.createElement('span');
+    name.className = 'reference-group-name';
+    name.textContent = group.name;
+    const count = document.createElement('span');
+    count.className = 'reference-group-count';
+    count.textContent = `${group.images.length}/10 images`;
+    copy.append(name, count);
+    applyButton.appendChild(copy);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'reference-group-delete';
+    deleteButton.textContent = '✕';
+    deleteButton.title = 'Delete group';
+    deleteButton.setAttribute('aria-label', `Delete reference group ${group.name}`);
+    deleteButton.onclick = () => deleteReferenceGroup(group.id);
+
+    const favoriteButton = document.createElement('button');
+    favoriteButton.type = 'button';
+    favoriteButton.className = `favorite-action${isFavorite('groups', group.id) ? ' active' : ''}`;
+    favoriteButton.textContent = '★';
+    favoriteButton.title = isFavorite('groups', group.id) ? 'Remove favorite' : 'Add favorite';
+    favoriteButton.setAttribute('aria-label', `${favoriteButton.title}: ${group.name}`);
+    favoriteButton.onclick = () => toggleFavorite('groups', group.id);
+
+    card.append(applyButton, favoriteButton, deleteButton);
+    list.appendChild(card);
+  });
+}
+
+function openReferenceGroupModal() {
+  if (!refImages.length) {
+    showToast('Select at least one reference image first', 'error');
+    return;
+  }
+  if (refImages.length > 10) {
+    showToast('A reference group can contain at most 10 images', 'error');
+    return;
+  }
+  const input = document.getElementById('referenceGroupNameInput');
+  input.value = '';
+  document.getElementById('referenceGroupModalHint').textContent = `${refImages.length}/10 selected images will be saved in this group.`;
+  document.getElementById('referenceGroupModal').classList.add('show');
+  requestAnimationFrame(() => input.focus());
+}
+
+async function persistReferenceGroup(name, images) {
+  const cleanName = String(name || '').trim().slice(0, 60);
+  if (!cleanName) {
+    showToast('Enter a group name first', 'error');
+    return null;
+  }
+  if (referenceGroups.some(group => group.name.toLowerCase() === cleanName.toLowerCase())) {
+    showToast('A reference group with this name already exists', 'error');
+    return null;
+  }
+  const group = normalizeReferenceGroups([{
+    id: makeId('ref-group'),
+    name: cleanName,
+    images,
+  }])[0];
+  if (!group?.images.length) {
+    showToast('Select between 1 and 10 reference images', 'error');
+    return null;
+  }
+  if (referenceGroupSavePending) return null;
+  referenceGroupSavePending = true;
+  referenceGroups.push(group);
+  renderReferenceGroups();
+  const saved = await serverSet('atlasReferenceGroups', referenceGroups);
+  referenceGroupSavePending = false;
+  if (!saved) {
+    referenceGroups = referenceGroups.filter(item => item.id !== group.id);
+    renderReferenceGroups();
+    showToast('Reference group could not be saved', 'error');
+    return null;
+  }
+  return group;
+}
+
+async function confirmSaveReferenceGroup() {
+  if (referenceGroupSavePending) return;
+  const input = document.getElementById('referenceGroupNameInput');
+  if (!input.value.trim()) {
+    showToast('Enter a group name first', 'error');
+    input.focus();
+    return;
+  }
+  if (!refImages.length || refImages.length > 10) {
+    closeModal('referenceGroupModal');
+    showToast('Select between 1 and 10 reference images', 'error');
+    return;
+  }
+
+  const button = document.getElementById('confirmReferenceGroupButton');
+  button.disabled = true;
+  const group = await persistReferenceGroup(input.value, refImages.slice(0, 10).map(image => ({
+    src: getRefSrc(image),
+    dataUrl: image.dataUrl || '',
+    name: image.name || 'Reference',
+  })));
+  button.disabled = false;
+  if (!group) return;
+  closeModal('referenceGroupModal');
+  showToast(`Reference group “${group.name}” saved`, 'success');
+}
+
+function nextReferenceGroupName(baseName) {
+  const base = String(baseName || 'Reference group').trim().slice(0, 60) || 'Reference group';
+  const existing = new Set(referenceGroups.map(group => group.name.toLowerCase()));
+  if (!existing.has(base.toLowerCase())) return base;
+  let suffix = 2;
+  while (existing.has(`${base} ${suffix}`.toLowerCase())) suffix += 1;
+  return `${base} ${suffix}`.slice(0, 60);
+}
+
+function openFolderReferenceGroupModal(fi) {
+  const folder = folders[fi];
+  if (!folder) return;
+  const seen = new Set();
+  const images = (Array.isArray(folder.images) ? folder.images : []).map(image => ({
+    src: getImageSrc(image),
+    dataUrl: image?.dataUrl || '',
+    name: String(image?.name || 'Reference'),
+  })).filter(image => {
+    if (!image.src || seen.has(image.src)) return false;
+    seen.add(image.src);
+    return true;
+  });
+  if (!images.length) {
+    showToast('This folder has no reference images', 'error');
+    return;
+  }
+
+  folderReferenceGroupDraft = {
+    folderId: folder.id,
+    images,
+    selectedSources: images.slice(0, 10).map(image => image.src),
+  };
+  const input = document.getElementById('folderReferenceGroupNameInput');
+  input.value = nextReferenceGroupName(folder.name);
+  renderFolderReferenceGroupPicker();
+  document.getElementById('folderReferenceGroupModal').classList.add('show');
+  requestAnimationFrame(() => input.focus());
+}
+
+function renderFolderReferenceGroupPicker() {
+  const draft = folderReferenceGroupDraft;
+  const grid = document.getElementById('folderReferenceGroupGrid');
+  const status = document.getElementById('folderReferenceGroupStatus');
+  const confirmButton = document.getElementById('confirmFolderReferenceGroupButton');
+  if (!draft || !grid || !status || !confirmButton) return;
+
+  const count = draft.selectedSources.length;
+  status.textContent = `${count}/10 selected from ${draft.images.length} folder images.${draft.images.length > 10 ? ' Choose the images for this group.' : ''}`;
+  confirmButton.disabled = count === 0 || referenceGroupSavePending;
+  grid.replaceChildren();
+
+  draft.images.forEach(image => {
+    const order = draft.selectedSources.indexOf(image.src);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `folder-group-picker-item${order >= 0 ? ' selected' : ''}`;
+    button.setAttribute('aria-pressed', String(order >= 0));
+    button.setAttribute('aria-label', `${order >= 0 ? 'Remove' : 'Add'} ${image.name}${order >= 0 ? `, position ${order + 1}` : ''}`);
+    button.onclick = () => toggleFolderGroupImage(image.src);
+
+    const preview = document.createElement('img');
+    preview.src = image.src;
+    preview.alt = image.name;
+    button.appendChild(preview);
+    if (order >= 0) {
+      const badge = document.createElement('span');
+      badge.className = 'folder-group-picker-order';
+      badge.textContent = String(order + 1);
+      button.appendChild(badge);
+    }
+    grid.appendChild(button);
+  });
+}
+
+function toggleFolderGroupImage(src) {
+  if (!folderReferenceGroupDraft) return;
+  const selected = folderReferenceGroupDraft.selectedSources;
+  const index = selected.indexOf(src);
+  if (index >= 0) {
+    selected.splice(index, 1);
+  } else if (selected.length >= 10) {
+    showToast('A reference group can contain at most 10 images', 'error');
+    return;
+  } else {
+    selected.push(src);
+  }
+  renderFolderReferenceGroupPicker();
+}
+
+function selectFirstFolderGroupImages() {
+  if (!folderReferenceGroupDraft) return;
+  folderReferenceGroupDraft.selectedSources = folderReferenceGroupDraft.images.slice(0, 10).map(image => image.src);
+  renderFolderReferenceGroupPicker();
+}
+
+function clearFolderGroupImages() {
+  if (!folderReferenceGroupDraft) return;
+  folderReferenceGroupDraft.selectedSources = [];
+  renderFolderReferenceGroupPicker();
+}
+
+async function confirmFolderReferenceGroup() {
+  if (!folderReferenceGroupDraft || referenceGroupSavePending) return;
+  const input = document.getElementById('folderReferenceGroupNameInput');
+  if (!input.value.trim()) {
+    showToast('Enter a group name first', 'error');
+    input.focus();
+    return;
+  }
+  const imagesBySource = new Map(folderReferenceGroupDraft.images.map(image => [image.src, image]));
+  const images = folderReferenceGroupDraft.selectedSources
+    .map(src => imagesBySource.get(src))
+    .filter(Boolean);
+  if (!images.length) {
+    showToast('Select between 1 and 10 reference images', 'error');
+    return;
+  }
+
+  const button = document.getElementById('confirmFolderReferenceGroupButton');
+  button.disabled = true;
+  const group = await persistReferenceGroup(input.value, images);
+  button.disabled = false;
+  if (!group) return;
+  closeModal('folderReferenceGroupModal');
+  folderReferenceGroupDraft = null;
+  showToast(`Reference group “${group.name}” saved`, 'success');
+}
+
+function applyReferenceGroup(id) {
+  const group = referenceGroups.find(item => String(item.id) === String(id));
+  if (!group) return;
+  refImages = group.images.slice(0, 10).map(image => ({
+    src: getRefSrc(image),
+    dataUrl: image.dataUrl || '',
+    name: image.name || 'Reference',
+  }));
+  renderFolders();
+  renderRefStrip();
+  scheduleWorkspaceSave();
+  showToast(`${group.name}: ${refImages.length} references selected`, 'success');
+}
+
+async function deleteReferenceGroup(id) {
+  const group = referenceGroups.find(item => String(item.id) === String(id));
+  if (!group || !confirm(`Delete reference group "${group.name}"?`)) return;
+  const previous = referenceGroups;
+  const previousFavorites = favorites.groups.slice();
+  referenceGroups = referenceGroups.filter(item => String(item.id) !== String(id));
+  favorites.groups = favorites.groups.filter(item => String(item) !== String(id));
+  renderReferenceGroups();
+  const [groupsSaved, favoritesSaved] = await Promise.all([
+    serverSet('atlasReferenceGroups', referenceGroups),
+    serverSet('atlasFavorites', favorites),
+  ]);
+  if (groupsSaved && favoritesSaved) {
+    showToast('Reference group deleted', 'success');
+    return;
+  }
+  referenceGroups = previous;
+  favorites.groups = previousFavorites;
+  serverSetBulk([
+    { key: 'atlasReferenceGroups', value: JSON.stringify(referenceGroups) },
+    { key: 'atlasFavorites', value: JSON.stringify(favorites) },
+  ]);
+  renderReferenceGroups();
+  showToast('Reference group could not be deleted', 'error');
+}
+
+function removeReferenceFromGroups(src) {
+  let changed = false;
+  referenceGroups = referenceGroups.map(group => {
+    const images = group.images.filter(image => getRefSrc(image) !== src);
+    if (images.length !== group.images.length) changed = true;
+    return { ...group, images };
+  }).filter(group => group.images.length > 0);
+  return changed;
+}
+
+function renderRefStrip() {
+  const strip = document.getElementById('refStrip');
+  const inner = document.getElementById('refImagesStrip');
+  const summary = document.getElementById('refSummary');
+
+  updateMobileReferenceActions();
+  renderReferenceGroups();
+
+  // Clear previous content safely
+  while (inner.firstChild) inner.removeChild(inner.firstChild);
+
+  if (!refImages.length) {
+    strip.style.display = 'none';
+    summary.innerHTML = 'No reference images selected.<br>Click a folder image to add as reference.';
+    return;
+  }
+
+  strip.style.display = 'block';
+
+  // Label
+  const label = document.createElement('span');
+  label.className = 'ref-label';
+  label.textContent = 'References:';
+  inner.appendChild(label);
+
+  // Thumbs
+  refImages.forEach((r, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'ref-thumb';
+
+    const img = document.createElement('img');
+    img.src = getRefSrc(r);
+    img.alt = r.name || '';
+    wrap.appendChild(img);
+
+    const btn = document.createElement('button');
+    btn.className = 'ref-thumb-remove';
+    btn.textContent = '✕';
+    btn.title = 'Remove';
+    btn.onclick = () => removeRef(i);
+    wrap.appendChild(btn);
+
+    inner.appendChild(wrap);
+  });
+
+  summary.innerHTML = `${refImages.length} reference image${refImages.length > 1 ? 's' : ''} selected.<br>
+    <span style="color:var(--glow);cursor:pointer;font-size:10px;" onclick="clearRefs()">Clear all</span>`;
+}
+
+function removeRef(i) {
+  refImages.splice(i, 1);
+  renderFolders();
+  renderRefStrip();
+  scheduleWorkspaceSave();
+}
+function clearRefs() {
+  refImages = [];
+  renderFolders();
+  renderRefStrip();
+  scheduleWorkspaceSave();
+}
+
+function updateMobileReferenceActions() {
+  const count = refImages.length;
+  const label = document.getElementById('mobileRefSelectionCount');
+  const clearButton = document.getElementById('mobileClearRefsButton');
+  if (label) label.textContent = count ? `${count} reference${count === 1 ? '' : 's'} selected` : 'No references selected';
+  if (clearButton) clearButton.disabled = count === 0;
+}
+
+// ============================================================
+// MODE SWITCHING (Image / Video)
+// ============================================================
+let currentMode = 'image'; // 'image' | 'video'
+
+function switchMode(mode, btn) {
+  currentMode = mode;
+  document.querySelectorAll('#modeImageBtn,#modeVideoBtn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  const imgEls = document.querySelectorAll('.image-settings');
+  const vidEls = document.querySelectorAll('.video-settings');
+
+  if (mode === 'image') {
+    imgEls.forEach(e => { e.style.display = ''; e.classList.remove('hide'); });
+    vidEls.forEach(e => { e.style.display = 'none'; });
+    document.getElementById('promptTextarea').placeholder = 'Describe your image…';
+    document.getElementById('generateBtnIcon').textContent = '✦';
+    document.getElementById('emptyState').querySelector('.empty-title').textContent = 'Ready to generate';
+    document.getElementById('emptyState').querySelector('.empty-sub').textContent = 'Enter a prompt below, choose your Seedream model, and click Generate.';
+  } else {
+    imgEls.forEach(e => { e.style.display = 'none'; });
+    vidEls.forEach(e => { e.style.display = 'block'; });
+    document.getElementById('promptTextarea').placeholder = 'Describe your video… (camera movement, scene, style)';
+    document.getElementById('generateBtnIcon').textContent = '▶';
+    document.getElementById('emptyState').querySelector('.empty-title').textContent = 'Ready to generate video';
+    document.getElementById('emptyState').querySelector('.empty-sub').textContent = 'Enter a prompt, choose a Seedance or MiniMax model, and click Generate. For I2V models select a reference image first.';
+  }
+  updateFalSettingsVisibility();
+  scheduleWorkspaceSave();
+}
+
+// Show H3-specific controls only for fal.ai (MiniMax) video models.
+// Lives in the prompt bar next to the model select; hidden in image mode.
+function updateFalSettingsVisibility() {
+  const wrap = document.getElementById('falH3Settings');
+  const modelEl = document.getElementById('videoModelSelect');
+  if (!wrap || !modelEl) return;
+  wrap.style.display = currentMode === 'video' && String(modelEl.value || '').startsWith('minimax/') ? 'flex' : 'none';
+}
+
+// ============================================================
+// GENERATION
+// ============================================================
+// ============================================================
+// QUEUE SYSTEM
+// ============================================================
+let activeGenerations = 0;
+const MAX_CONCURRENT_GENERATIONS = 3;
+
+function snapshotSettings(mode) {
+  if (mode === 'image') {
+    return {
+      model: document.getElementById('modelSelect').value,
+      size: document.getElementById('sizeSelect').value,
+      count: parseInt(document.getElementById('countSelect').value),
+      syncMode: document.getElementById('syncToggle').classList.contains('on'),
+      guidance: parseFloat(document.getElementById('guidanceVal').textContent),
+      pngOutput: document.getElementById('pngToggle').classList.contains('on'),
+      refImages: refImages.map(r => ({ src: getRefSrc(r), dataUrl: r.dataUrl, name: r.name })),
+    };
+  } else {
+    return {
+      model: document.getElementById('videoModelSelect').value,
+      aspectRatio: document.getElementById('aspectSelect').value,
+      duration: parseInt(document.getElementById('durationSelect').value),
+      falResolution: document.getElementById('falResolutionSelect')?.value || '768P',
+      falDuration: parseInt(document.getElementById('falDurationSelect')?.value || '5', 10) || 5,
+      falExpansion: document.getElementById('falExpansionSelect')?.value || 'balanced',
+      generateAudio: document.getElementById('audioToggle').classList.contains('on'),
+      cameraFixed: document.getElementById('cameraFixedToggle').classList.contains('on'),
+      refImages: refImages.map(r => ({ src: getRefSrc(r), dataUrl: r.dataUrl, name: r.name })),
+    };
+  }
+}
+
+function updateGenerateButtonLabel() {
+  const queuedCount = generationQueue.filter(job => job.status === 'queued').length;
+  const label = activeGenerations > 0 || queuedCount > 0
+    ? `Running ${activeGenerations}/${MAX_CONCURRENT_GENERATIONS}${queuedCount ? ` · ${queuedCount} queued` : ''}`
+    : 'Generate';
+  document.getElementById('generateBtnText').textContent = label;
+}
+
+function persistGenerationQueue() {
+  const snapshot = generationQueue.slice(0, 50).map(job => JSON.parse(JSON.stringify(job)));
+  const save = generationQueueSaveChain.then(() => serverSet('atlasGenerationQueue', snapshot));
+  generationQueueSaveChain = save.catch(() => false);
+  return save;
+}
+
+function renderQueue() {
+  const badge = document.getElementById('queueBadge');
+  const list = document.getElementById('queueList');
+  const visibleJobs = generationQueue.slice(0, 30);
+  badge.textContent = String(generationQueue.filter(job => job.status === 'queued' || job.status === 'running').length);
+
+  if (!visibleJobs.length) {
+    list.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:8px 0">Queue is empty.</div>';
+    return;
+  }
+
+  list.innerHTML = visibleJobs.map(job => {
+    const icon = job.status === 'running'
+      ? '<span class="queue-spinner"></span>'
+      : job.status === 'done'
+        ? '<span class="queue-status-icon">✓</span>'
+        : job.status === 'error'
+          ? '<span class="queue-status-icon">✕</span>'
+          : '<span class="queue-status-icon">•</span>';
+    const ownedHere = job.ownerId === queueRunnerId;
+    const actions = job.status === 'running'
+      ? (ownedHere
+          ? `<button class="queue-item-action danger" onclick="cancelQueueJob('${job.id}')">Cancel</button>`
+          : `<button class="queue-item-action" onclick="takeOverQueueJob('${job.id}')">Resume here</button>`)
+      : ['error', 'canceled'].includes(job.status)
+        ? `<button class="queue-item-action" onclick="retryQueueJob('${job.id}')">Retry</button><button class="queue-item-action danger" onclick="removeQueueJob('${job.id}')">Remove</button>`
+        : job.status === 'queued' && !ownedHere
+          ? `<button class="queue-item-action" onclick="takeOverQueueJob('${job.id}')">Run here</button>`
+          : `<button class="queue-item-action danger" onclick="removeQueueJob('${job.id}')">Remove</button>`;
+    return `
+      <div class="queue-item ${job.status}">
+        ${icon}
+        <div class="queue-item-info">
+          <div class="queue-item-model">${escHtml(job.modelLabel)}</div>
+          <div class="queue-item-prompt">${escHtml(job.prompt)}</div>
+          <div class="queue-item-time">${escHtml(job.status)} · ${escHtml(new Date(job.createdAt || Date.now()).toLocaleString())}</div>
+        </div>
+        <div class="queue-item-actions">${actions}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function removeQueueJob(id) {
+  const job = generationQueue.find(item => item.id === id);
+  if (!job || job.status === 'running') return;
+  generationQueue = generationQueue.filter(item => item.id !== id);
+  renderQueue();
+  updateGenerateButtonLabel();
+  persistGenerationQueue();
+}
+
+function retryQueueJob(id) {
+  const job = generationQueue.find(item => item.id === id);
+  if (!job || !['error', 'canceled'].includes(job.status)) return;
+  Object.assign(job, { status: 'queued', predictionId: job.atlasFailed ? '' : job.predictionId, atlasFailed: false, error: '', ownerId: queueRunnerId });
+  persistGenerationQueue();
+  renderQueue();
+  processQueue();
+}
+
+function takeOverQueueJob(id) {
+  const job = generationQueue.find(item => item.id === id);
+  if (!job || job.status === 'done') return;
+  Object.assign(job, { status: 'queued', ownerId: queueRunnerId });
+  persistGenerationQueue();
+  renderQueue();
+  processQueue();
+}
+
+async function cancelQueueJob(id) {
+  const job = generationQueue.find(item => item.id === id);
+  if (!job || job.status !== 'running') return;
+  Object.assign(job, { status: 'canceled', error: 'Canceled by user' });
+  renderQueue();
+  await persistGenerationQueue();
+  if (job.predictionId) {
+    if (job.endpoint) {
+      fetch('/api/fal/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestId: job.predictionId, endpoint: job.endpoint }),
+      }).catch(() => {});
+    } else {
+      fetch('/api/atlas/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ predictionId: job.predictionId }),
+      }).catch(() => {});
+    }
+  }
+}
+
+function clearQueue() {
+  generationQueue = generationQueue.filter(job => job.status === 'running');
+  renderQueue();
+  updateGenerateButtonLabel();
+  persistGenerationQueue();
+}
+
+function processQueue() {
+  while (activeGenerations < MAX_CONCURRENT_GENERATIONS) {
+    const nextJob = generationQueue.find(job => job.status === 'queued' && (!job.ownerId || job.ownerId === queueRunnerId));
+    if (!nextJob) break;
+
+    nextJob.status = 'running';
+    nextJob.ownerId = queueRunnerId;
+    activeGenerations++;
+    renderQueue();
+    updateGenerateButtonLabel();
+    persistGenerationQueue();
+
+    (async () => {
+      try {
+        if (nextJob.mode === 'image') await generateImage(nextJob.prompt, nextJob.settings, nextJob);
+        else await generateVideo(nextJob.prompt, nextJob.settings, nextJob);
+        if (nextJob.status !== 'canceled') nextJob.status = 'done';
+      } catch (err) {
+        if (nextJob.status !== 'canceled') {
+          nextJob.status = 'error';
+          nextJob.error = err.message;
+        }
+      } finally {
+        activeGenerations = Math.max(0, activeGenerations - 1);
+        renderQueue();
+        updateGenerateButtonLabel();
+        persistGenerationQueue();
+        processQueue();
+      }
+    })();
+  }
+}
+
+function enqueueGenerationJobs(promptTexts, mode, settings) {
+  const jobs = promptTexts.map(prompt => ({
+    id: makeId('queue'),
+    prompt,
+    mode,
+    settings: JSON.parse(JSON.stringify(settings)),
+    status: 'queued',
+    ownerId: queueRunnerId,
+    createdAt: new Date().toISOString(),
+    predictionId: '',
+    modelLabel: mode === 'image'
+      ? (settings.model || 'image').split('/').pop()
+      : (settings.model || 'video').split('/').pop(),
+  }));
+
+  generationQueue.unshift(...jobs);
+  renderQueue();
+  updateGenerateButtonLabel();
+  persistGenerationQueue();
+  processQueue();
+  return jobs.length;
+}
+
+function generate() {
+  if (!apiKey) { showToast('Please enter your Atlas Cloud API key', 'error'); return; }
+
+  const mode = currentMode;
+  const settings = snapshotSettings(mode);
+  const selectedPrompts = prompts
+    .filter(p => selectedPromptIds.has(p.id))
+    .map(p => p.text.trim())
+    .filter(Boolean);
+  const currentPrompt = document.getElementById('promptTextarea').value.trim();
+  const promptTexts = selectedPrompts.length ? selectedPrompts : (currentPrompt ? [currentPrompt] : []);
+  if (!promptTexts.length) { showToast('Please enter a prompt or select saved prompts', 'error'); return; }
+
+  // Validate I2V before queuing
+  if (mode === 'video') {
+    const isI2V = settings.model.includes('i2v') || settings.model.includes('image-to-video');
+    if (isI2V && !settings.refImages.length) {
+      showToast('I2V model — please select a reference image first', 'error');
+      return;
+    }
+  }
+
+  const queued = enqueueGenerationJobs(promptTexts, mode, settings);
+  showToast(`${queued} prompt${queued === 1 ? '' : 's'} added to queue`, 'success');
+}
+
+async function generateImage(prompt, settings, queueJob = null) {
+  const { model, size, count, syncMode, guidance, refImages: rawRefs } = settings;
+  if (queueJob?.predictionId && history.some(item => String(item.predictionId) === String(queueJob.predictionId))) return;
+  const jobRefs = await prepareJobRefs(rawRefs);
+
+  const grid = document.getElementById('outputGrid');
+  const empty = document.getElementById('emptyState');
+  empty.style.display = 'none';
+  grid.style.display = 'grid';
+
+  const skeletonNodes = [];
+  for (let i = 0; i < count; i++) {
+    const sk = document.createElement('div');
+    sk.className = 'skeleton-card';
+    sk.innerHTML = `
+      <div class="skeleton-img"><div class="skeleton-spinner"></div></div>
+      <div style="padding:10px 12px;font-size:10px;color:var(--muted);font-family:var(--mono)">Generating image…</div>
+    `;
+    grid.insertBefore(sk, grid.firstChild);
+    skeletonNodes.push(sk);
+  }
+
+  try {
+    const body = { model, prompt, size, num_images: count, enable_sync_mode: syncMode, guidance_scale: guidance };
+    if (jobRefs.length && model.includes('edit')) {
+      body.image = jobRefs[0].dataUrl;
+      if (jobRefs.length > 1) body.images = jobRefs.slice(0, 10).map(r => r.dataUrl);
+    }
+
+    let predictionId = queueJob?.predictionId || '';
+    if (!predictionId) {
+      const resp = await fetch('https://api.atlascloud.ai/api/v1/model/generateImage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+      });
+      const result = await resp.json();
+      if (!resp.ok) { const e = new Error(result.message || result.error || `HTTP ${resp.status}`); e.raw = JSON.stringify(result); throw e; }
+      predictionId = result.data?.id;
+      if (!predictionId) throw new Error('No prediction ID returned');
+      if (queueJob) {
+        queueJob.predictionId = predictionId;
+        await persistGenerationQueue();
+      }
+    }
+    const outputs = await pollPrediction(predictionId, 240, queueJob);
+
+    skeletonNodes.forEach(s => s.remove());
+
+    const timestamp = new Date().toLocaleTimeString();
+    const ts = queueJob?.startedAt || Date.parse(queueJob?.createdAt || '') || Date.now();
+    if (queueJob && !queueJob.startedAt) queueJob.startedAt = ts;
+    const predictionToken = String(predictionId).replace(/[^a-zA-Z0-9_-]/g, '-').slice(-48) || String(ts);
+    let savedCount = 0;
+
+    // Save all outputs to server first, get local URLs
+    const localOutputs = await Promise.all(outputs.map(async (u, i) => {
+      const fname = `img-${ts}-${predictionToken}-${i}-${model.replace(/[\/:]/g,'-')}.jpg`;
+      return await saveOutputToServer(u, fname, prompt, { mode: 'image', model, settings: { ...settings, refImages: rawRefs.map(ref => ({ src: getRefSrc(ref), name: ref.name || '' })) }, predictionId, createdAt: new Date(ts).toISOString() });
+    }));
+
+    for (const localUrl of localOutputs) {
+      const card = document.createElement('div');
+      card.className = 'output-card';
+      card.innerHTML = `
+        <img src="${localUrl}" alt="Generated" loading="lazy" onclick="openLightbox('${localUrl}')">
+        <div class="output-card-info">
+            <span>${model.split('/').pop()} · ${timestamp} <span class="mode-badge image">IMG</span></span>
+          <div style="display:flex;gap:6px">
+            <button class="output-card-copy" onclick="copyPromptForOutput('${localUrl}')" title="Copy prompt">⧉</button>
+            <button class="output-card-dl" onclick="downloadImage('${localUrl}')" title="Download">⬇</button>
+            <button class="output-card-del" onclick="deleteOutput('${localUrl}', this)" title="Delete">✕</button>
+          </div>
+        </div>`;
+      grid.insertBefore(card, grid.firstChild);
+      if (autosaveEnabled && saveDirHandle) {
+        const fname = `seedream-${model.replace(/\//g,'-')}-${ts}.jpg`;
+        if (await saveImageToFolder(localUrl, fname)) savedCount++;
+      }
+    }
+
+    const histItem = {
+      id: ts,
+      type: 'image',
+      model: model.split('/').pop(),
+      prompt: prompt,
+      promptFull: prompt,
+      thumb: localOutputs[0],
+      time: timestamp,
+      outputs: localOutputs,
+      predictionId,
+      settings: { ...settings, refImages: rawRefs.map(ref => ({ src: getRefSrc(ref), name: ref.name || '' })) },
+    };
+    history.unshift(histItem);
+    if (history.length > 50) history.pop();
+    saveData(); renderHistory();
+    const saveMsg = savedCount > 0 ? ` · ${savedCount} auto-saved` : '';
+    showToast(`${localOutputs.length} image${localOutputs.length>1?'s':''} generated!${saveMsg}`, 'success');
+
+  } catch (err) {
+    skeletonNodes.forEach(s => s.remove());
+    if (!grid.children.length) { grid.style.display = 'none'; document.getElementById('emptyState').style.display = 'flex'; }
+    showToast('Error: ' + err.message, 'error');
+    logError(err.message, { model, prompt, raw: err.raw || '' });
+    throw err;
+  }
+}
+
+async function generateVideo(prompt, settings, queueJob = null) {
+  const { model, aspectRatio, duration, generateAudio, cameraFixed, refImages: rawRefs } = settings;
+  if (queueJob?.predictionId && history.some(item => String(item.predictionId) === String(queueJob.predictionId))) return;
+  const jobRefs = await prepareJobRefs(rawRefs);
+  const isI2V = model.includes('i2v') || model.includes('image-to-video');
+  const isFalModel = String(model).startsWith('minimax/');
+  if (isFalModel && queueJob) queueJob.endpoint = model;
+
+  const grid = document.getElementById('outputGrid');
+  const empty = document.getElementById('emptyState');
+  empty.style.display = 'none';
+  grid.style.display = 'grid';
+
+  const skeletonNode = document.createElement('div');
+  skeletonNode.className = 'skeleton-card';
+  skeletonNode.style.gridColumn = '1/-1';
+  skeletonNode.innerHTML = `
+    <div class="skeleton-img" style="aspect-ratio:16/9"><div class="skeleton-spinner"></div></div>
+    <div style="padding:10px 12px;font-size:10px;color:var(--muted);font-family:var(--mono)">Generating video — this may take 1–3 minutes…</div>`;
+  grid.insertBefore(skeletonNode, grid.firstChild);
+
+  try {
+    if (isFalModel) {
+      // ── fal.ai queue flow (MiniMax H3 Max) ────────────────────────────────
+      const falDuration = Math.min(15, Math.max(5, parseInt(settings.falDuration, 10) || parseInt(duration, 10) || 5));
+      const falPayload = {
+        prompt,
+        prompt_expansion_mode: settings.falExpansion === 'quality' ? 'quality' : 'balanced',
+        resolution: settings.falResolution === '480P' ? '480P' : '768P',
+        duration: falDuration,
+        sync_mode: false,
+      };
+      if (isI2V) {
+        if (!jobRefs.length) throw new Error('Image-to-video needs at least one reference image');
+        falPayload.image_url = jobRefs[0].dataUrl;
+        if (jobRefs[1]?.dataUrl) falPayload.end_image_url = jobRefs[1].dataUrl;
+      } else {
+        const allowed = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
+        falPayload.aspect_ratio = allowed.includes(aspectRatio) ? aspectRatio : '16:9';
+      }
+      if (!falApiKey && !queueJob?.predictionId) {
+        throw new Error('Add your fal.ai API key in Settings first');
+      }
+
+      let predictionId = queueJob?.predictionId || '';
+      if (!predictionId) {
+        const submitResp = await fetch('/api/fal/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint: model, payload: falPayload }),
+        });
+        const submitResult = await submitResp.json().catch(() => ({}));
+        if (!submitResp.ok) { const e = new Error(submitResult.error || `HTTP ${submitResp.status}`); e.raw = submitResult.details || ''; throw e; }
+        predictionId = submitResult.requestId;
+        if (!predictionId) throw new Error('No fal request id returned');
+        if (queueJob) {
+          queueJob.predictionId = predictionId;
+          queueJob.endpoint = model;
+          await persistGenerationQueue();
+        }
+      }
+      const videoUrl = await pollFalPrediction(predictionId, model, 900, queueJob);
+
+      if (skeletonNode) skeletonNode.remove();
+
+      const timestamp = new Date().toLocaleTimeString();
+      const ts = queueJob?.startedAt || Date.parse(queueJob?.createdAt || '') || Date.now();
+      if (queueJob && !queueJob.startedAt) queueJob.startedAt = ts;
+      const predictionToken = String(predictionId).replace(/[^a-zA-Z0-9_-]/g, '-').slice(-48) || String(ts);
+      let savedCount = 0;
+
+      const localOutputs = [await saveOutputToServer(videoUrl, `vid-${ts}-${predictionToken}-0-${model.replace(/[\/:]/g,'-')}.mp4`, prompt, { mode: 'video', model, settings: { ...settings, refImages: rawRefs.map(ref => ({ src: getRefSrc(ref), name: ref.name || '' })) }, predictionId, createdAt: new Date(ts).toISOString() })];
+
+      for (const localUrl of localOutputs) {
+        const card = document.createElement('div');
+        card.className = 'output-card video-card';
+        card.innerHTML = `
+          <video src="${localUrl}" controls playsinline style="width:100%;aspect-ratio:16/9;background:#000;display:block"></video>
+          <div class="output-card-info">
+            <span>${model.split('/').pop()} · ${falDuration}s · ${timestamp} <span class="mode-badge video">VID</span></span>
+            <div style="display:flex;gap:6px">
+              <button class="output-card-copy" onclick="copyPromptForOutput('${localUrl}')" title="Copy prompt">⧉</button>
+              <button class="output-card-cmp" onclick="compareOutput('${localUrl}')" title="Compare">⚖</button>
+              <button class="output-card-dl" onclick="downloadVideo('${localUrl}')" title="Download">⬇</button>
+              <button class="output-card-del" onclick="deleteOutput('${localUrl}', this)" title="Delete">✕</button>
+            </div>
+          </div>`;
+        grid.insertBefore(card, grid.firstChild);
+        if (autosaveEnabled && saveDirHandle) {
+          const fname = `h3max-${model.replace(/\//g,'-')}-${ts}.mp4`;
+          if (await saveImageToFolder(localUrl, fname)) savedCount++;
+        }
+      }
+
+      const thumbUrl = isI2V && jobRefs.length ? (jobRefs[0].src || jobRefs[0].dataUrl) : (localOutputs[0] || '');
+      const histItem = {
+        id: ts,
+        type: 'video',
+        model: model.split('/').pop(),
+        prompt: prompt,
+        promptFull: prompt,
+        thumb: thumbUrl,
+        videoUrl: localOutputs[0],
+        time: timestamp,
+        outputs: localOutputs,
+        predictionId,
+        settings: { ...settings, refImages: rawRefs.map(ref => ({ src: getRefSrc(ref), name: ref.name || '' })) },
+      };
+      history.unshift(histItem);
+      if (history.length > 50) history.pop();
+      saveData(); renderHistory();
+      const saveMsg = savedCount > 0 ? ` · ${savedCount} auto-saved` : '';
+      showToast(`Video generated via fal.ai!${saveMsg}`, 'success');
+      return;
+    }
+
+    const body = { model, prompt, aspect_ratio: aspectRatio, duration, generate_audio: generateAudio, camera_fixed: cameraFixed };
+    if (isI2V && jobRefs.length) body.image = jobRefs[0].dataUrl;
+
+    let predictionId = queueJob?.predictionId || '';
+    if (!predictionId) {
+      const resp = await fetch('https://api.atlascloud.ai/api/v1/model/generateVideo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify(body),
+      });
+      const result = await resp.json();
+      if (!resp.ok) { const e = new Error(result.message || result.error || `HTTP ${resp.status}`); e.raw = JSON.stringify(result); throw e; }
+      predictionId = result.data?.id;
+      if (!predictionId) throw new Error('No prediction ID returned');
+      if (queueJob) {
+        queueJob.predictionId = predictionId;
+        await persistGenerationQueue();
+      }
+    }
+    const outputs = await pollPrediction(predictionId, 240, queueJob);
+
+    if (skeletonNode) skeletonNode.remove();
+
+    const timestamp = new Date().toLocaleTimeString();
+    const ts = queueJob?.startedAt || Date.parse(queueJob?.createdAt || '') || Date.now();
+    if (queueJob && !queueJob.startedAt) queueJob.startedAt = ts;
+    const predictionToken = String(predictionId).replace(/[^a-zA-Z0-9_-]/g, '-').slice(-48) || String(ts);
+    let savedCount = 0;
+
+    // Save videos to server
+    const localOutputs = await Promise.all(outputs.map(async (u, i) => {
+      const fname = `vid-${ts}-${predictionToken}-${i}-${model.replace(/[\/:]/g,'-')}.mp4`;
+      return await saveOutputToServer(u, fname, prompt, { mode: 'video', model, settings: { ...settings, refImages: rawRefs.map(ref => ({ src: getRefSrc(ref), name: ref.name || '' })) }, predictionId, createdAt: new Date(ts).toISOString() });
+    }));
+
+    for (const localUrl of localOutputs) {
+      const card = document.createElement('div');
+      card.className = 'output-card video-card';
+      card.innerHTML = `
+        <video src="${localUrl}" controls playsinline style="width:100%;aspect-ratio:16/9;background:#000;display:block"></video>
+        <div class="output-card-info">
+          <span>${model.split('/').pop()} · ${duration}s · ${timestamp} <span class="mode-badge video">VID</span></span>
+          <div style="display:flex;gap:6px">
+            <button class="output-card-copy" onclick="copyPromptForOutput('${localUrl}')" title="Copy prompt">⧉</button>
+            <button class="output-card-dl" onclick="downloadVideo('${localUrl}')" title="Download">⬇</button>
+            <button class="output-card-del" onclick="deleteOutput('${localUrl}', this)" title="Delete">✕</button>
+          </div>
+        </div>`;
+      grid.insertBefore(card, grid.firstChild);
+      if (autosaveEnabled && saveDirHandle) {
+        const fname = `seedance-${model.replace(/\//g,'-')}-${ts}.mp4`;
+        if (await saveImageToFolder(localUrl, fname)) savedCount++;
+      }
+    }
+
+    const thumbUrl = isI2V && jobRefs.length ? (jobRefs[0].src || jobRefs[0].dataUrl) : (localOutputs[0] || '');
+    const histItem = {
+      id: ts,
+      type: 'video',
+      model: model.split('/').pop(),
+      prompt: prompt,
+      promptFull: prompt,
+      thumb: thumbUrl,
+      videoUrl: localOutputs[0],
+      time: timestamp,
+      outputs: localOutputs,
+      predictionId,
+      settings: { ...settings, refImages: rawRefs.map(ref => ({ src: getRefSrc(ref), name: ref.name || '' })) },
+    };
+    history.unshift(histItem);
+    if (history.length > 50) history.pop();
+    saveData(); renderHistory();
+    const saveMsg = savedCount > 0 ? ` · ${savedCount} auto-saved` : '';
+    showToast(`Video generated!${saveMsg}`, 'success');
+
+  } catch (err) {
+    if (skeletonNode) skeletonNode.remove();
+    if (!grid.children.length) { grid.style.display = 'none'; document.getElementById('emptyState').style.display = 'flex'; }
+    showToast('Error: ' + err.message, 'error');
+    logError(err.message, { model, prompt, raw: err.raw || '' });
+    throw err;
+  }
+}
+
+async function pollPrediction(id, maxWaitSecs = 240, queueJob = null) {
+  const url = `https://api.atlascloud.ai/api/v1/model/prediction/${id}`;
+  const maxIterations = Math.ceil(maxWaitSecs / 2);
+  for (let i = 0; i < maxIterations; i++) {
+    if (queueJob?.status === 'canceled') throw new Error('Generation canceled');
+    await sleep(2000);
+    const resp = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    });
+    const result = await resp.json();
+    const data = result.data;
+    if (data.status === 'completed') {
+      return data.outputs || [];
+    } else if (data.status === 'failed') {
+      if (queueJob) queueJob.atlasFailed = true;
+      throw new Error(data.error || 'Generation failed');
+    }
+  }
+  throw new Error('Generation timed out');
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Poll the fal.ai queue for one request until the video URL is available.
+// Non-400 errors (e.g. upstream hiccups) are tolerated for a while, but a
+// long error streak aborts instead of spinning for the full timeout.
+async function pollFalPrediction(requestId, endpoint, maxWaitSecs = 900, queueJob = null) {
+  const maxIterations = Math.ceil(maxWaitSecs / 2);
+  let errorStreak = 0;
+  for (let i = 0; i < maxIterations; i++) {
+    if (queueJob?.status === 'canceled') throw new Error('Generation canceled');
+    await sleep(2000);
+    const resp = await fetch(`/api/fal/status/${encodeURIComponent(requestId)}?endpoint=${encodeURIComponent(endpoint)}`);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      if (resp.status === 400) throw new Error(data.error || 'fal status failed');
+      if (++errorStreak > 15) throw new Error('fal status endpoint unreachable');
+      continue;
+    }
+    errorStreak = 0;
+    if (data.status === 'COMPLETED') {
+      const resultResp = await fetch(`/api/fal/result/${encodeURIComponent(requestId)}?endpoint=${encodeURIComponent(endpoint)}`);
+      const result = await resultResp.json().catch(() => ({}));
+      if (!resultResp.ok) throw new Error(result.error || 'fal result failed');
+      const url = result.video?.url;
+      if (!url) throw new Error('fal result contains no video URL');
+      return url;
+    }
+  }
+  throw new Error('Generation timed out');
+}
+
+// ============================================================
+// SAVE FOLDER (File System Access API)
+// ============================================================
+let saveDirHandle = null;
+let autosaveEnabled = false;
+const fsSupported = ('showDirectoryPicker' in window);
+
+function initSaveFolder() {
+  if (!fsSupported) {
+    document.getElementById('fsWarning').classList.add('show');
+    document.getElementById('saveFolderBtn').disabled = true;
+    document.getElementById('saveFolderBtn').title = 'Not supported in this browser';
+    document.getElementById('saveFolderBtn').style.opacity = '0.4';
+  }
+  // Restore autosave preference (handle is not persisted — user must re-pick on each session)
+  autosaveEnabled = false; // loaded in bootFromServer
+}
+
+function toggleAutosave() {
+  autosaveEnabled = !autosaveEnabled;
+  document.getElementById('autosaveToggle').classList.toggle('on', autosaveEnabled);
+  serverSet('atlasAutosave', autosaveEnabled ? '1' : '0');
+  if (autosaveEnabled && !saveDirHandle && fsSupported) {
+    pickSaveFolder();
+  }
+}
+
+async function pickSaveFolder() {
+  if (!fsSupported) {
+    showToast('File System Access API not supported. Use Chrome/Edge.', 'error');
+    return;
+  }
+  try {
+    saveDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    updateSaveFolderUI();
+    showToast('Save folder set: ' + saveDirHandle.name, 'success');
+  } catch (e) {
+    if (e.name !== 'AbortError') showToast('Could not open folder: ' + e.message, 'error');
+  }
+}
+
+function clearSaveFolder() {
+  saveDirHandle = null;
+  updateSaveFolderUI();
+  showToast('Save folder cleared', 'success');
+}
+
+function updateSaveFolderUI() {
+  const bar = document.getElementById('saveFolderBar');
+  const nameEl = document.getElementById('saveFolderName');
+  const subEl = document.getElementById('saveFolderSub');
+  const btn = document.getElementById('saveFolderBtn');
+  const actions = document.getElementById('saveFolderActions');
+
+  if (saveDirHandle) {
+    bar.classList.add('active');
+    nameEl.textContent = saveDirHandle.name;
+    subEl.textContent = autosaveEnabled ? '✓ Auto-saving enabled' : 'Folder ready — auto-save is off';
+    subEl.style.color = autosaveEnabled ? 'var(--success)' : 'var(--muted)';
+    btn.textContent = 'Change';
+    actions.style.display = 'flex';
+  } else {
+    bar.classList.remove('active');
+    nameEl.textContent = 'No folder selected';
+    subEl.textContent = fsSupported ? 'Click Choose to pick a folder' : 'Use Chrome/Edge for this feature';
+    subEl.style.color = 'var(--muted)';
+    btn.textContent = 'Choose';
+    actions.style.display = 'none';
+  }
+}
+
+async function saveImageToFolder(url, filename) {
+  if (!saveDirHandle) return false;
+  try {
+    // Fetch the image as blob
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    const ext = blob.type.includes('png') ? 'png' : 'jpg';
+    const fname = filename || `seedream-${Date.now()}.${ext}`;
+    const fileHandle = await saveDirHandle.getFileHandle(fname, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return true;
+  } catch (e) {
+    console.warn('Auto-save failed:', e);
+    // If permission expired, prompt again
+    if (e.name === 'NotAllowedError') {
+      showToast('Folder permission lost. Please re-select your save folder.', 'error');
+      saveDirHandle = null;
+      updateSaveFolderUI();
+    }
+    return false;
+  }
+}
+
+
+function renderHistory() {
+  const el = document.getElementById('historyList');
+  if (!history.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:16px">No history yet.</div>';
+    return;
+  }
+  el.innerHTML = history.map(h => {
+    const isVideo = h.type === 'video';
+    const thumbHtml = isVideo
+      ? `<div class="history-thumb" style="display:flex;align-items:center;justify-content:center;background:#0a1a10;font-size:18px;">▶</div>`
+      : `<div class="history-thumb"><img src="${h.thumb}" alt="" onerror="this.style.display='none'"></div>`;
+    const clickAction = isVideo && h.videoUrl
+      ? `onclick="openVideoLightbox('${h.videoUrl}')"`
+      : `onclick="openLightbox('${h.outputs?.[0] || h.thumb}')"`;
+    return `
+    <div class="history-item" ${clickAction}>
+      ${thumbHtml}
+      <div class="history-info">
+        <div class="history-model">${escHtml(h.model)} <span class="mode-badge ${isVideo ? 'video' : 'image'}" style="font-size:9px;padding:1px 5px">${isVideo ? 'VID' : 'IMG'}</span></div>
+        <div class="history-prompt">${escHtml(getPromptText(h) || 'Prompt unavailable')}</div>
+        <div class="history-time">${h.time}</div>
+      </div>
+      <button class="history-copy-btn" onclick="event.stopPropagation();copyPromptByHistoryId('${h.id}')" title="Copy prompt">⧉</button>
+    </div>`;
+  }).join('');
+}
+
+// ============================================================
+// TABS
+// ============================================================
+function switchTab(tab, el) {
+  currentTab = tab;
+  document.querySelectorAll('#viewTabs .htab').forEach(b => b.classList.remove('active'));
+  if (el) el.classList.add('active');
+
+  const grid = document.getElementById('outputGrid');
+  const empty = document.getElementById('emptyState');
+  const promptBar = document.getElementById('promptBar');
+  const refStrip = document.getElementById('refStrip');
+  const referenceGroupsEl = document.getElementById('referenceGroups');
+
+  if (tab === 'history') {
+    promptBar.style.display = 'none';
+    refStrip.style.display = 'none';
+    referenceGroupsEl.style.display = 'none';
+    renderCenterHistory();
+    scheduleWorkspaceSave();
+    return;
+  }
+
+  promptBar.style.display = '';
+  referenceGroupsEl.style.display = '';
+  if (refImages.length) refStrip.style.display = 'block';
+  else refStrip.style.display = 'none';
+  empty.querySelector('.empty-title').textContent = currentMode === 'video' ? 'Ready to generate video' : 'Ready to generate';
+  empty.querySelector('.empty-sub').textContent = currentMode === 'video'
+    ? 'Enter a prompt, choose a Seedance model, and click Generate. For I2V models select a reference image first.'
+    : 'Enter a prompt below, choose your Seedream model, and click Generate.';
+
+  if (!grid.children.length) {
+    restoreOutputGrid();
+  }
+  if (grid.children.length) {
+    grid.style.display = 'grid';
+    empty.style.display = 'none';
+  } else {
+    grid.style.display = 'none';
+    empty.style.display = 'flex';
+  }
+  scheduleWorkspaceSave();
+}
+
+function renderCenterHistory() {
+  const grid = document.getElementById('outputGrid');
+  const empty = document.getElementById('emptyState');
+
+  if (!history.length) {
+    grid.style.display = 'none';
+    empty.style.display = 'flex';
+    empty.querySelector('.empty-title').textContent = 'No history yet';
+    empty.querySelector('.empty-sub').textContent = 'Generate an image or video to populate your history.';
+    return;
+  }
+
+  empty.style.display = 'none';
+  grid.style.display = 'grid';
+  grid.innerHTML = '';
+
+  for (const h of history) {
+    const outputs = Array.isArray(h.outputs) && h.outputs.length ? h.outputs : (h.thumb ? [h.thumb] : []);
+    for (const outputUrl of outputs) {
+      const card = document.createElement('div');
+      if (h.type === 'video') {
+        card.className = 'output-card video-card';
+        card.innerHTML = `
+          <video src="${outputUrl}" controls playsinline style="width:100%;aspect-ratio:16/9;background:#000;display:block"></video>
+          <div class="output-card-info">
+            <span>${escHtml(h.model || 'video')} <span class="mode-badge video">VID</span></span>
+            <div style="display:flex;gap:6px">
+              <button class="output-card-copy" onclick="copyPromptForOutput('${outputUrl}')" title="Copy prompt">⧉</button>
+              <button class="output-card-cmp" onclick="compareOutput('${outputUrl}')" title="Compare">⚖</button>
+              <button class="output-card-dl" onclick="downloadVideo('${outputUrl}')" title="Download">⬇</button>
+              <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
+            </div>
+          </div>`;
+      } else {
+        card.className = 'output-card';
+        card.innerHTML = `
+          <img src="${outputUrl}" alt="Generated" loading="lazy" onclick="openLightbox('${outputUrl}')">
+          <div class="output-card-info">
+            <span>${escHtml(h.model || 'image')} <span class="mode-badge image">IMG</span></span>
+            <div style="display:flex;gap:6px">
+              <button class="output-card-copy" onclick="copyPromptForOutput('${outputUrl}')" title="Copy prompt">⧉</button>
+              <button class="output-card-cmp" onclick="compareOutput('${outputUrl}')" title="Compare">⚖</button>
+              <button class="output-card-dl" onclick="downloadImage('${outputUrl}')" title="Download">⬇</button>
+              <button class="output-card-del" onclick="deleteOutput('${outputUrl}', this)" title="Delete">✕</button>
+            </div>
+          </div>`;
+      }
+      grid.appendChild(card);
+    }
+  }
+}
+
+// ============================================================
+// LIGHTBOX
+// ============================================================
+function openLightbox(src) {
+  document.getElementById('lightboxImg').src = src;
+  document.getElementById('lightboxImg').style.display = 'block';
+  document.getElementById('lightboxVideo').style.display = 'none';
+  document.getElementById('lightbox').classList.add('show');
+}
+function openVideoLightbox(src) {
+  const vid = document.getElementById('lightboxVideo');
+  vid.src = src; vid.style.display = 'block';
+  document.getElementById('lightboxImg').style.display = 'none';
+  document.getElementById('lightbox').classList.add('show');
+  vid.play();
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('show');
+  document.getElementById('lightboxVideo').pause();
+  document.getElementById('lightboxVideo').src = '';
+}
+
+// ============================================================
+// DOWNLOAD
+// ============================================================
+function downloadImage(url) {
+  const a = document.createElement('a');
+  a.href = url; a.download = `seedream-${Date.now()}.jpg`;
+  a.target = '_blank'; a.click();
+}
+
+function downloadVideo(url) {
+  const a = document.createElement('a');
+  a.href = url; a.download = `seedance-${Date.now()}.mp4`;
+  a.target = '_blank'; a.click();
+}
+
+function basenameFromOutputUrl(outputUrl) {
+  const clean = String(outputUrl || '').split('?')[0];
+  if (!clean.startsWith('/outputs/')) return '';
+  const parts = clean.split('/');
+  return parts[parts.length - 1] || '';
+}
+
+function removeOutputFromLocalHistory(outputUrl) {
+  const next = [];
+  for (const item of history) {
+    const outs = Array.isArray(item.outputs) ? item.outputs.filter(u => u !== outputUrl) : [];
+    if (!outs.length && (item.thumb === outputUrl || item.videoUrl === outputUrl || (item.outputs || []).length)) {
+      continue;
+    }
+    const copy = { ...item, outputs: outs };
+    if (copy.thumb === outputUrl) copy.thumb = outs[0] || '';
+    if (copy.videoUrl === outputUrl) copy.videoUrl = outs.find(u => /\.(mp4|webm)$/i.test(u)) || '';
+    next.push(copy);
+  }
+  history = next;
+}
+
+async function deleteOutput(outputUrl, btnEl) {
+  const filename = basenameFromOutputUrl(outputUrl);
+  if (!filename) {
+    showToast('Can only delete files saved on this server', 'error');
+    return;
+  }
+  if (!confirm('Delete this output from server and history?')) return;
+
+  try {
+    if (btnEl) btnEl.disabled = true;
+    const r = await fetch(`${SERVER}/api/output/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+
+    removeOutputFromLocalHistory(outputUrl);
+    renderHistory();
+    if (currentTab === 'history') renderCenterHistory();
+    else {
+      const card = btnEl?.closest('.output-card');
+      if (card) card.remove();
+      const grid = document.getElementById('outputGrid');
+      if (!grid.children.length) {
+        grid.style.display = 'none';
+        document.getElementById('emptyState').style.display = 'flex';
+      }
+    }
+
+    const atlasMsg = d.atlasAttempted
+      ? ` Atlas: ${d.atlasDeleted}/${d.atlasAttempted} deleted.`
+      : '';
+    showToast(`Deleted output.${atlasMsg}`, d.atlasAttempted && d.atlasDeleted === 0 ? 'error' : 'success');
+    if (d.atlasAttempted && d.atlasDeleted === 0 && Array.isArray(d.atlasTried)) {
+      console.warn('Atlas delete attempts', d.atlasTried);
+    }
+    syncFromServer();
+  } catch (e) {
+    showToast('Delete failed: ' + e.message, 'error');
+  } finally {
+    if (btnEl) btnEl.disabled = false;
+  }
+}
+
+// ============================================================
+// MODAL UTILS
+// ============================================================
+function closeModal(id) {
+  document.getElementById(id).classList.remove('show');
+  if (id === 'promptGeneratorModal') document.getElementById('xaiQuickButton').setAttribute('aria-expanded', 'false');
+}
+
+// Close modals on overlay click
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => {
+    if (e.target === el) closeModal(el.id);
+  });
+});
+
+// ============================================================
+// TOAST
+// ============================================================
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent = msg;
+  document.getElementById('toastIcon').textContent = type === 'success' ? '✓' : '✕';
+  t.className = `toast show ${type}`;
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ============================================================
+// PERSIST
+// ============================================================
+function saveData() {
+  const lightHistory = history.slice(0, 20).map(h => ({
+    ...h,
+    thumb: h.thumb?.startsWith('data:') ? '' : h.thumb,
+    outputs: (h.outputs || []).filter(u => !u.startsWith('data:')),
+  }));
+  // Fire-and-forget bulk save
+  serverSetBulk([
+    { key: 'atlasPrompts', value: JSON.stringify(prompts) },
+    { key: 'atlasPromptFolders', value: JSON.stringify(promptFolders) },
+    { key: 'atlasFolders', value: JSON.stringify(folders) },
+    { key: 'atlasReferenceGroups', value: JSON.stringify(referenceGroups) },
+    { key: 'atlasHistory', value: JSON.stringify(lightHistory) },
+    { key: 'atlasFavorites', value: JSON.stringify(favorites) },
+    { key: 'atlasWorkflowPresets', value: JSON.stringify(workflowPresets) },
+  ]);
+  scheduleWorkspaceSave();
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ============================================================
+// DATA MANAGER — Export / Import / Clear
+// ============================================================
+
+function openDataManager() {
+  // Refresh stats
+  const statsEl = document.getElementById('dmStats');
+  const folderImgCount = folders.reduce((a, f) => a + f.images.length, 0);
+  const storageKb = Math.round(JSON.stringify({prompts, promptFolders, folders, referenceGroups, history}).length / 1024);
+  statsEl.innerHTML = `
+    <div class="dm-stat"><div class="dm-stat-val">${prompts.length}</div><div class="dm-stat-label">Saved Prompts</div></div>
+    <div class="dm-stat"><div class="dm-stat-val">${promptFolders.length}</div><div class="dm-stat-label">Prompt Folders</div></div>
+    <div class="dm-stat"><div class="dm-stat-val">${folders.length}</div><div class="dm-stat-label">Folders</div></div>
+    <div class="dm-stat"><div class="dm-stat-val">${folderImgCount}</div><div class="dm-stat-label">Reference Images</div></div>
+    <div class="dm-stat"><div class="dm-stat-val">${referenceGroups.length}</div><div class="dm-stat-label">Reference Groups</div></div>
+  `;
+  document.getElementById('dataManagerModal').classList.add('show');
+  loadServerBackups();
+}
+
+function buildExportPayload(what = 'all') {
+  const payload = {
+    _version: 2,
+    _app: 'SeedreamStudio',
+    _exported: new Date().toISOString(),
+  };
+  if (what === 'all' || what === 'prompts') payload.prompts = prompts;
+  if (what === 'all' || what === 'prompts') payload.promptFolders = promptFolders;
+  if (what === 'all' || what === 'folders') payload.folders = folders;
+  if (what === 'all' || what === 'folders') payload.referenceGroups = referenceGroups;
+  if (what === 'all') {
+    payload.apiKey = apiKey;
+    payload.history = history;
+    payload.favorites = favorites;
+    payload.workflowPresets = workflowPresets;
+  }
+  return payload;
+}
+
+function downloadJson(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportData() {
+  downloadJson(buildExportPayload('all'), `seedream-studio-backup-${dateSlug()}.json`);
+  showToast('Full backup exported!', 'success');
+}
+function exportPromptsOnly() {
+  downloadJson(buildExportPayload('prompts'), `seedream-prompts-${dateSlug()}.json`);
+  showToast('Prompts exported!', 'success');
+}
+function exportFoldersOnly() {
+  downloadJson(buildExportPayload('folders'), `seedream-folders-${dateSlug()}.json`);
+  showToast('Folders exported!', 'success');
+}
+
+function dateSlug() {
+  return new Date().toISOString().slice(0,10);
+}
+
+// Store pending import data + mode
+let _pendingImport = null;
+let _importMode = 'replace';
+
+function triggerImport(mode) {
+  _importMode = mode;
+  // If file already loaded, apply it
+  if (_pendingImport) { applyImport(_pendingImport, mode); return; }
+  // Otherwise prompt for file
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.json';
+  inp.onchange = () => handleImportFile(inp);
+  inp.click();
+}
+
+function handleImportFile(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data._app || data._app !== 'SeedreamStudio') {
+        // Still try to import if it has recognisable keys
+        if (!data.prompts && !data.folders) {
+          showToast('Invalid file — not a Seedream Studio export.', 'error'); return;
+        }
+      }
+      _pendingImport = data;
+      // Show drop zone feedback
+      const drop = document.getElementById('importDrop');
+      drop.style.borderColor = 'var(--success)';
+      drop.style.color = 'var(--success)';
+      drop.querySelector('.drop-icon').textContent = '✓';
+      drop.childNodes[2].textContent = `Loaded: ${file.name}`;
+      showToast(`File loaded — choose Replace or Merge`, 'success');
+    } catch(err) {
+      showToast('Could not parse file: ' + err.message, 'error');
+    }
+  };
+  reader.readAsText(file);
+}
+
+function applyImport(data, mode) {
+  if (mode === 'replace') {
+    if (!confirm('Replace ALL local data with imported file? This cannot be undone.')) return;
+    if (data.prompts) prompts = data.prompts;
+    if (data.promptFolders) promptFolders = data.promptFolders;
+    if (data.folders) folders = data.folders;
+    referenceGroups = normalizeReferenceGroups(data.referenceGroups || []);
+    if (data.history) history = data.history;
+    favorites = normalizeFavorites(data.favorites);
+    workflowPresets = normalizeWorkflowPresets(data.workflowPresets);
+    if (data.apiKey) {
+      apiKey = data.apiKey;
+      document.getElementById('apiKeyInput').value = apiKey;
+      document.getElementById('statusDot').classList.toggle('connected', apiKey.length > 10);
+    }
+    showToast('Data replaced from import!', 'success');
+  } else {
+    // Merge: add prompts/folders not already present (by name)
+    let addedPrompts = 0, addedFolders = 0, addedGroups = 0;
+    if (data.prompts) {
+      for (const p of data.prompts) {
+        if (!prompts.find(x => x.name === p.name && x.text === p.text)) {
+          prompts.push(p); addedPrompts++;
+        }
+      }
+    }
+    if (data.promptFolders) {
+      for (const f of data.promptFolders) {
+        if (!promptFolders.find(x => x.name === f.name)) promptFolders.push(f);
+      }
+    }
+    if (data.folders) {
+      for (const f of data.folders) {
+        const existing = folders.find(x => x.name === f.name);
+        if (!existing) {
+          folders.push(f); addedFolders++;
+        } else {
+          // Merge images into existing folder (up to 10)
+          for (const img of (f.images || [])) {
+            if (existing.images.length < 10 && !existing.images.find(i => i.name === img.name)) {
+              existing.images.push(img);
+            }
+          }
+        }
+      }
+    }
+    for (const group of normalizeReferenceGroups(data.referenceGroups)) {
+      if (!referenceGroups.some(item => item.name.toLowerCase() === group.name.toLowerCase())) {
+        referenceGroups.push(group);
+        addedGroups++;
+      }
+    }
+    const importedFavorites = normalizeFavorites(data.favorites);
+    favorites = normalizeFavorites({
+      prompts: [...favorites.prompts, ...importedFavorites.prompts],
+      groups: [...favorites.groups, ...importedFavorites.groups],
+    });
+    for (const preset of normalizeWorkflowPresets(data.workflowPresets)) {
+      if (!workflowPresets.some(item => item.name.toLowerCase() === preset.name.toLowerCase())) workflowPresets.push(preset);
+    }
+    showToast(`Merged: +${addedPrompts} prompts, +${addedFolders} folders, +${addedGroups} groups`, 'success');
+  }
+
+  ensurePromptFolderShape();
+  saveData();
+  renderPrompts();
+  renderFolders();
+  renderReferenceGroups();
+  renderHistory();
+  renderWorkflowPresets();
+  _pendingImport = null;
+  closeModal('dataManagerModal');
+}
+
+async function clearAllData() {
+  if (!confirm('Delete ALL data — prompts, folders, history, API key? This cannot be undone.')) return;
+  prompts = []; promptFolders = []; folders = []; referenceGroups = []; history = []; workflowPresets = []; favorites = normalizeFavorites(null); apiKey = ''; xaiAuthToken = ''; falApiKey = '';
+  xaiPromptCategories = normalizeXaiPromptCategories(null);
+  selectedXaiPromptKeywords.clear();
+  editingXaiPromptCategoryIds.clear();
+  selectedPromptIds.clear();
+  generationQueue = [];
+  openPromptFolderIds.clear();
+  openReferenceFolderIds.clear();
+  promptFolderStateInitialized = false;
+  referenceFolderStateInitialized = false;
+  await Promise.all([
+    serverDel('atlasApiKey'), serverDel('xaiAuthToken'), serverDel('xaiPromptCategories'), serverDel('atlasOutputPrompts'), serverDel('atlasOutputMeta'), serverDel('atlasPrompts'),
+    serverDel('atlasPromptFolders'),
+    serverDel('atlasFolders'), serverDel('atlasReferenceGroups'), serverDel('atlasHistory'), serverDel('atlasFavorites'), serverDel('atlasWorkflowPresets'), serverDel('atlasGenerationQueue'),
+  ]);
+  document.getElementById('apiKeyInput').value = '';
+  const settingsAtlasEl = document.getElementById('settingsAtlasKeyInput');
+  const xaiTokenEl = document.getElementById('xaiTokenInput');
+  if (settingsAtlasEl) settingsAtlasEl.value = '';
+  if (xaiTokenEl) xaiTokenEl.value = '';
+  document.getElementById('statusDot').classList.remove('connected');
+  renderPrompts(); renderFolders(); renderHistory(); renderRefStrip();
+  renderQueue(); updateGenerateButtonLabel();
+  closeModal('dataManagerModal');
+  showToast('All data cleared from server.', 'success');
+}
+
+// Drag & drop on import zone
+document.addEventListener('DOMContentLoaded', () => {
+  const drop = document.getElementById('importDrop');
+  if (!drop) return;
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('dragover'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault(); drop.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) { const fakeInput = { files: [file] }; handleImportFile(fakeInput); }
+  });
+});
+
+
+
+// ============================================================
+// ERROR LOG
+// ============================================================
+let errorLog = [];
+
+function logError(message, context = {}) {
+  const entry = {
+    id: Date.now(),
+    time: new Date().toLocaleTimeString(),
+    date: new Date().toLocaleDateString(),
+    message: String(message),
+    model: context.model || '',
+    prompt: context.prompt ? context.prompt.slice(0, 120) : '',
+    raw: context.raw || '',
+  };
+  errorLog.unshift(entry);
+  if (errorLog.length > 100) errorLog.pop();
+  renderErrorLog();
+  updateErrorBadge();
+}
+
+function updateErrorBadge() {
+  const btn = document.getElementById('errorLogBtn');
+  const badge = document.getElementById('errorCountBadge');
+  badge.textContent = errorLog.length;
+  btn.classList.toggle('has-errors', errorLog.length > 0);
+}
+
+function renderErrorLog() {
+  const el = document.getElementById('errorLogList');
+  if (!errorLog.length) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:16px">No errors logged.</div>';
+    return;
+  }
+  el.innerHTML = errorLog.map(e => `
+    <div class="error-entry">
+      <div class="error-entry-time">${e.date} ${e.time}</div>
+      <div class="error-entry-msg">${escHtml(e.message)}</div>
+      ${e.model ? `<div class="error-entry-ctx">Model: ${escHtml(e.model)}</div>` : ''}
+      ${e.prompt ? `<div class="error-entry-ctx">Prompt: ${escHtml(e.prompt)}${e.prompt.length >= 120 ? '…' : ''}</div>` : ''}
+      ${e.raw ? `<div class="error-entry-ctx">Raw: ${escHtml(e.raw)}</div>` : ''}
+      <button class="error-copy-btn" onclick="copyError(${e.id})">📋 Copy</button>
+    </div>
+  `).join('');
+}
+
+function copyError(id) {
+  const e = errorLog.find(x => x.id === id);
+  if (!e) return;
+  const txt = `[${e.date} ${e.time}] ${e.message}${e.model ? '\nModel: ' + e.model : ''}${e.prompt ? '\nPrompt: ' + e.prompt : ''}${e.raw ? '\nRaw: ' + e.raw : ''}`;
+  copyTextToClipboard(txt, 'Error copied to clipboard');
+}
+
+function toggleErrorLog() {
+  document.getElementById('errorLogPanel').classList.toggle('show');
+}
+
+function clearErrorLog() {
+  errorLog = [];
+  renderErrorLog();
+  updateErrorBadge();
+  document.getElementById('errorLogPanel').classList.remove('show');
+}
+
+// Keyboard shortcut: Ctrl+Enter to generate
+document.getElementById('promptTextarea').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') generate();
+});
