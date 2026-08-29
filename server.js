@@ -527,6 +527,13 @@ const server = http.createServer(async (req, res) => {
     return safe;
   }
 
+  // fal.run hosts queue status/result/cancel under the APP path (first two
+  // endpoint segments, e.g. 'minimax/h3-max'), not the full sub-endpoint.
+  function falAppBase(endpoint) {
+    const parts = String(endpoint || '').split('/').filter(Boolean).slice(0, 2);
+    return parts.length === 2 ? parts.join('/') : '';
+  }
+
   if (pathname === '/api/fal/submit' && req.method === 'POST') {
     try {
       const body = JSON.parse(await readBody(req) || '{}');
@@ -562,7 +569,7 @@ const server = http.createServer(async (req, res) => {
       if (!endpoint) return jsonResp(res, 400, { error: 'Unknown fal endpoint' });
       const key = falKeyFor(null);
       if (!key) return jsonResp(res, 400, { error: 'Missing fal.ai API key' });
-      const result = await httpCall('GET', `${FAL_QUEUE_BASE}/${endpoint}/requests/${id}/status`, { 'Authorization': `Key ${key}` });
+      const result = await httpCall('GET', `${FAL_QUEUE_BASE}/${falAppBase(endpoint)}/requests/${id}/status`, { 'Authorization': `Key ${key}` });
       if (!result.ok) return jsonResp(res, result.status || 502, { error: 'fal status failed', status: result.status });
       const data = JSON.parse(result.body || '{}');
       return jsonResp(res, 200, {
@@ -583,7 +590,7 @@ const server = http.createServer(async (req, res) => {
       if (!endpoint) return jsonResp(res, 400, { error: 'Unknown fal endpoint' });
       const key = falKeyFor(null);
       if (!key) return jsonResp(res, 400, { error: 'Missing fal.ai API key' });
-      const result = await httpCall('GET', `${FAL_QUEUE_BASE}/${endpoint}/requests/${id}`, { 'Authorization': `Key ${key}` });
+      const result = await httpCall('GET', `${FAL_QUEUE_BASE}/${falAppBase(endpoint)}/requests/${id}`, { 'Authorization': `Key ${key}` });
       if (!result.ok) return jsonResp(res, result.status || 502, { error: 'fal result failed', status: result.status });
       return jsonResp(res, 200, JSON.parse(result.body || '{}'));
     } catch (e) {
@@ -600,7 +607,7 @@ const server = http.createServer(async (req, res) => {
       if (!endpoint) return jsonResp(res, 400, { error: 'Unknown fal endpoint' });
       const key = falKeyFor(body);
       if (!key) return jsonResp(res, 400, { error: 'Missing fal.ai API key' });
-      const result = await httpCall('POST', `${FAL_QUEUE_BASE}/${endpoint}/requests/${id}/cancel`, { 'Authorization': `Key ${key}` }, '');
+      const result = await httpCall('POST', `${FAL_QUEUE_BASE}/${falAppBase(endpoint)}/requests/${id}/cancel`, { 'Authorization': `Key ${key}` }, '');
       return jsonResp(res, result.ok ? 200 : (result.status || 502), { ok: result.ok, status: result.status });
     } catch (e) {
       return jsonResp(res, 400, { error: e.message });

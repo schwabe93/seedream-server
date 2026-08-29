@@ -5057,12 +5057,13 @@ function switchMode(mode, btn) {
   scheduleWorkspaceSave();
 }
 
-// Show H3-specific controls only for fal.ai (MiniMax) video models.
+// Show H3-specific controls only for fal.ai (MiniMax) video models. The wrap
+// lives inside #vidSettings, which hides them entirely in image mode.
 function updateFalSettingsVisibility() {
   const wrap = document.getElementById('falH3Settings');
   const modelEl = document.getElementById('videoModelSelect');
   if (!wrap || !modelEl) return;
-  wrap.style.display = String(modelEl.value || '').startsWith('minimax/') && currentMode === 'video' ? 'flex' : 'none';
+  wrap.style.display = String(modelEl.value || '').startsWith('minimax/') ? 'flex' : 'none';
 }
 
 // ============================================================
@@ -5629,14 +5630,22 @@ async function pollPrediction(id, maxWaitSecs = 240, queueJob = null) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // Poll the fal.ai queue for one request until the video URL is available.
+// Non-400 errors (e.g. upstream hiccups) are tolerated for a while, but a
+// long error streak aborts instead of spinning for the full timeout.
 async function pollFalPrediction(requestId, endpoint, maxWaitSecs = 900, queueJob = null) {
   const maxIterations = Math.ceil(maxWaitSecs / 2);
+  let errorStreak = 0;
   for (let i = 0; i < maxIterations; i++) {
     if (queueJob?.status === 'canceled') throw new Error('Generation canceled');
     await sleep(2000);
     const resp = await fetch(`/api/fal/status/${encodeURIComponent(requestId)}?endpoint=${encodeURIComponent(endpoint)}`);
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) { if (resp.status === 400) throw new Error(data.error || 'fal status failed'); continue; }
+    if (!resp.ok) {
+      if (resp.status === 400) throw new Error(data.error || 'fal status failed');
+      if (++errorStreak > 15) throw new Error('fal status endpoint unreachable');
+      continue;
+    }
+    errorStreak = 0;
     if (data.status === 'COMPLETED') {
       const resultResp = await fetch(`/api/fal/result/${encodeURIComponent(requestId)}?endpoint=${encodeURIComponent(endpoint)}`);
       const result = await resultResp.json().catch(() => ({}));
