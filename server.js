@@ -590,8 +590,16 @@ const server = http.createServer(async (req, res) => {
       if (!endpoint) return jsonResp(res, 400, { error: 'Unknown fal endpoint' });
       const key = falKeyFor(null);
       if (!key) return jsonResp(res, 400, { error: 'Missing fal.ai API key' });
-      const result = await httpCall('GET', `${FAL_QUEUE_BASE}/${falAppBase(endpoint)}/requests/${id}`, { 'Authorization': `Key ${key}` });
-      if (!result.ok) return jsonResp(res, result.status || 502, { error: 'fal result failed', status: result.status });
+      // The queue reports COMPLETED slightly before the result is retrievable,
+      // so tolerate brief upstream failures and retry a few times.
+      const url = `${FAL_QUEUE_BASE}/${falAppBase(endpoint)}/requests/${id}`;
+      let result;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        result = await httpCall('GET', url, { 'Authorization': `Key ${key}` });
+        if (result.ok) break;
+        await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
+      }
+      if (!result.ok) return jsonResp(res, result.status || 502, { error: 'fal result failed', status: result.status, details: result.body?.slice(0, 1000) || '' });
       return jsonResp(res, 200, JSON.parse(result.body || '{}'));
     } catch (e) {
       return jsonResp(res, 400, { error: e.message });
